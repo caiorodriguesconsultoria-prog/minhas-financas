@@ -2,6 +2,7 @@ import { useState } from "react";
 import { supabase } from "./supabase";
 
 const S = `
+  @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&display=swap');
   .lp-root { min-height: 100svh; background: #FFFFFF; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 24px; padding-bottom: calc(40px + env(safe-area-inset-bottom)); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif; }
   .lp-icon-wrap { width: 84px; height: 84px; border-radius: 22px; background: linear-gradient(145deg,#007AFF,#0040CC); display: flex; align-items: center; justify-content: center; font-size: 40px; box-shadow: 0 12px 40px rgba(0,122,255,0.35); margin-bottom: 28px; animation: lpIconPop 0.5s cubic-bezier(0.34,1.56,0.64,1) both; }
   @keyframes lpIconPop { from { opacity:0; transform:scale(0.6); } to { opacity:1; transform:scale(1); } }
@@ -111,9 +112,15 @@ export function LoginPage() {
     <>
       <style>{S}</style>
       <div className="lp-root">
-        <div className="lp-icon-wrap">💰</div>
-        <div className="lp-title">Minhas Finanças</div>
-        <div className="lp-subtitle">Controle seus gastos com inteligência e simplicidade.</div>
+        <svg width="64" height="64" viewBox="0 0 64 64" fill="none" style={{marginBottom:20}}>
+          <rect width="64" height="64" rx="16" fill="#1D1D1F"/>
+          <path d="M17 40L25 31L32 37L46 21" stroke="#34C759" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M38 21H46V29" stroke="#34C759" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        <div className="lp-title" style={{fontFamily:"'Quicksand', -apple-system, sans-serif",fontWeight:500}}>
+          Minhas <strong style={{fontWeight:700}}>Finanças</strong>
+        </div>
+        <div className="lp-subtitle">Controle seus gastos com <strong style={{fontWeight:600,color:"#1D1D1F"}}>inteligência</strong> e simplicidade.</div>
 
         <div className="lp-form">
           {error && <div className="lp-error">{error}</div>}

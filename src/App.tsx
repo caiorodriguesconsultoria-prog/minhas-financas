@@ -6,9 +6,11 @@ import { LoginPage } from "./LoginPage";
 
 // ─── CSS ──────────────────────────────────────────────────────────────────────
 const STYLE = `
+  @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   html { -webkit-text-size-adjust: 100%; }
   body { background: #F5F5F7; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif; color: #1D1D1F; overscroll-behavior: none; }
+  .logo-header, .seg-title, .card-balance, .summary-value, .section-title { font-family: 'Quicksand', -apple-system, sans-serif; }
   .app { width: 100%; max-width: 430px; margin: 0 auto; min-height: 100svh; background: #FFFFFF; position: relative; overflow-x: hidden; }
   @media (min-width: 768px)  { .app { max-width: 768px; } }
   @media (min-width: 1024px) { .app { max-width: 1024px; } }
@@ -1832,7 +1834,16 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
         {/* Sticky header */}
         <div className="seg-wrap">
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-            <div className="seg-title" style={{margin:0}}>Minhas Finanças</div>
+            <div className="logo-header" style={{margin:0,display:"flex",alignItems:"center",gap:10}}>
+              <svg width="30" height="30" viewBox="0 0 64 64" fill="none" style={{flexShrink:0}}>
+                <rect width="64" height="64" rx="16" fill="#1D1D1F"/>
+                <path d="M17 40L25 31L32 37L46 21" stroke="#34C759" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M38 21H46V29" stroke="#34C759" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              <span style={{fontSize:"clamp(20px,5.5vw,26px)",fontWeight:500,letterSpacing:"-0.4px",color:"#1D1D1F"}}>
+                Minhas <strong style={{fontWeight:700}}>Finanças</strong>
+              </span>
+            </div>
             {/* User avatar */}
             <div
               style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"4px 8px 4px 4px",borderRadius:20,background:"#F5F5F7",transition:"background 0.15s"}}
