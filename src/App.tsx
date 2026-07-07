@@ -605,21 +605,53 @@ function RelatoriosPage({ transactions, bills, loading }: { transactions: NormTx
     const d = new Date(b.data_vencimento + "T00:00:00");
     return d.getFullYear() === nextMonthDate.getFullYear() && d.getMonth() === nextMonthDate.getMonth();
   }).sort((a,b) => (a.data_vencimento ?? "").localeCompare(b.data_vencimento ?? ""));
-  const nextMonthTotal = nextMonthBills.reduce((s,b) => s + (b.valor_base ?? 0) + (b.juros_atraso ?? 0) + (b.encargos_cartao ?? 0), 0);
+  const isCardBill = (b: BillToPay) => (b.categoria ?? "").toLowerCase() === "cartão de crédito" || !!b.encargos_cartao;
+  const nextMonthCards = nextMonthBills.filter(isCardBill);
+  const nextMonthOther = nextMonthBills.filter(b => !isCardBill(b));
+  const billValor = (b: BillToPay) => (b.valor_base ?? 0) + (b.juros_atraso ?? 0) + (b.encargos_cartao ?? 0);
+  const nextMonthTotal = nextMonthBills.reduce((s,b) => s + billValor(b), 0);
+  const nextMonthCardsTotal = nextMonthCards.reduce((s,b) => s + billValor(b), 0);
+  const nextMonthOtherTotal = nextMonthOther.reduce((s,b) => s + billValor(b), 0);
 
   const buildBillsShareText = () => {
-    const lines = nextMonthBills.map(b => {
-      const valor = (b.valor_base ?? 0) + (b.juros_atraso ?? 0) + (b.encargos_cartao ?? 0);
+    const fmtLines = (list: BillToPay[]) => list.map(b => {
       const venc = b.data_vencimento ? new Date(b.data_vencimento + "T00:00:00").toLocaleDateString("pt-BR") : "sem data";
-      return `• ${b.nome ?? "Sem nome"} — ${formatBRL(valor)} (venc. ${venc})`;
-    });
-    return `📋 Despesas a pagar — ${nextMonthLabel}\n\n${lines.join("\n")}\n\nTotal: ${formatBRL(nextMonthTotal)}`;
+      return `• ${b.nome ?? "Sem nome"} — ${formatBRL(billValor(b))} (venc. ${venc})`;
+    }).join("\n");
+    const parts: string[] = [];
+    if (nextMonthOther.length) parts.push(`Contas fixas:\n${fmtLines(nextMonthOther)}\nSubtotal: ${formatBRL(nextMonthOtherTotal)}`);
+    if (nextMonthCards.length) parts.push(`Faturas de cartão:\n${fmtLines(nextMonthCards)}\nSubtotal: ${formatBRL(nextMonthCardsTotal)}`);
+    return `📋 Despesas a pagar — ${nextMonthLabel}\n\n${parts.join("\n\n")}\n\nTotal geral: ${formatBRL(nextMonthTotal)}`;
   };
   const shareWhatsApp = () => window.open(`https://wa.me/?text=${encodeURIComponent(buildBillsShareText())}`, "_blank");
   const shareEmail = () => {
     const subject = `Despesas a pagar — ${nextMonthLabel}`;
     window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(buildBillsShareText())}`;
   };
+
+  const renderBillGroup = (title: string, list: BillToPay[], subtotal: number) => list.length > 0 && (
+    <div style={{marginBottom:14}}>
+      <div style={{fontSize:12,fontWeight:600,color:"#86868B",textTransform:"uppercase",letterSpacing:0.3,marginBottom:6}}>{title}</div>
+      <div style={{borderTop:"0.5px solid #E5E5E7"}}>
+        {list.map(b => {
+          const venc = b.data_vencimento ? new Date(b.data_vencimento + "T00:00:00").toLocaleDateString("pt-BR") : "—";
+          return (
+            <div key={b.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+              <div>
+                <div style={{fontSize:14,color:"#1D1D1F"}}>{b.nome ?? "Sem nome"}</div>
+                <div style={{fontSize:12,color:"#86868B",marginTop:2}}>Vence em {venc}</div>
+              </div>
+              <div style={{fontSize:14,fontWeight:600,color:"#FF3B30"}}>{formatBRL(billValor(b))}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0 0"}}>
+        <span style={{fontSize:12,color:"#86868B"}}>Subtotal</span>
+        <span style={{fontSize:13,fontWeight:600,color:"#1D1D1F"}}>{formatBRL(subtotal)}</span>
+      </div>
+    </div>
+  );
 
   return (
     <div className="scroll-content page-fade">
@@ -632,27 +664,16 @@ function RelatoriosPage({ transactions, bills, loading }: { transactions: NormTx
           <span style={{fontSize:13,color:"#86868B"}}>{nextMonthBills.length} conta{nextMonthBills.length!==1?"s":""}</span>
         </div>
         {nextMonthBills.length === 0 ? (
-          <div style={{fontSize:13,color:"#86868B",padding:"8px 0"}}>Nenhuma conta cadastrada para {nextMonthLabel}.</div>
+          <div style={{fontSize:13,color:"#86868B",padding:"8px 0"}}>Nenhuma conta ou fatura cadastrada para {nextMonthLabel}.</div>
         ) : (
-          <div style={{borderTop:"0.5px solid #E5E5E7",marginBottom:12}}>
-            {nextMonthBills.map(b => {
-              const valor = (b.valor_base ?? 0) + (b.juros_atraso ?? 0) + (b.encargos_cartao ?? 0);
-              const venc = b.data_vencimento ? new Date(b.data_vencimento + "T00:00:00").toLocaleDateString("pt-BR") : "—";
-              return (
-                <div key={b.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
-                  <div>
-                    <div style={{fontSize:14,color:"#1D1D1F"}}>{b.nome ?? "Sem nome"}</div>
-                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>Vence em {venc}</div>
-                  </div>
-                  <div style={{fontSize:14,fontWeight:600,color:"#FF3B30"}}>{formatBRL(valor)}</div>
-                </div>
-              );
-            })}
-          </div>
+          <>
+            {renderBillGroup("Contas fixas", nextMonthOther, nextMonthOtherTotal)}
+            {renderBillGroup("Faturas de cartão", nextMonthCards, nextMonthCardsTotal)}
+          </>
         )}
         {nextMonthBills.length > 0 && (
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-            <span style={{fontSize:13,fontWeight:600,color:"#86868B"}}>Total</span>
+            <span style={{fontSize:13,fontWeight:600,color:"#86868B"}}>Total geral</span>
             <span style={{fontSize:16,fontWeight:700,color:"#1D1D1F"}}>{formatBRL(nextMonthTotal)}</span>
           </div>
         )}
@@ -1660,7 +1681,7 @@ function useCoupleLink(userId: string | null) {
 
 // ─── Contas Fixas page ────────────────────────────────────────────────────────
 
-const CATEGORIAS_FIXAS = ["Moradia","Utilidades","Assinaturas","Transporte","Saúde","Educação","Outros"];
+const CATEGORIAS_FIXAS = ["Moradia","Utilidades","Assinaturas","Cartão de Crédito","Transporte","Saúde","Educação","Outros"];
 
 function ContasFixasPage({ userId }: { userId: string }) {
   const [all, setAll] = useState<BillToPay[]>([]);
@@ -2197,10 +2218,15 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           <ContasFixasPage key="fixas" userId={user.id} />
         )}
         {navPage === "cartoes" && (
-          <div className="scroll-content page-fade" style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400,gap:12}}>
+          <div className="scroll-content page-fade" style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400,gap:12,textAlign:"center",padding:"0 24px"}}>
             <div style={{fontSize:52}}>🗂️</div>
             <div style={{fontSize:17,fontWeight:600}}>Meus Cartões</div>
-            <div style={{fontSize:14,color:"#6E6E73"}}>Em breve</div>
+            <div style={{fontSize:14,color:"#6E6E73"}}>
+              Por enquanto, cadastre suas faturas de cartão em <strong>Fixas</strong>, escolhendo a categoria "Cartão de Crédito". Elas já aparecem separadas no relatório de despesas do mês seguinte.
+            </div>
+            <button onClick={()=>handleNav("fixas")} style={{marginTop:8,padding:"10px 20px",background:"#007AFF",color:"#FFF",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              Ir para Fixas
+            </button>
           </div>
         )}
         {navPage === "ajustes" && (
