@@ -1773,7 +1773,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
   }, []);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { if (toast) { const t = setTimeout(()=>setToast(null), 3000); return () => clearTimeout(t); } }, [toast]);
+  useEffect(() => { if (toast) { const t = setTimeout(()=>setToast(null), toast.type==="error"?8000:3000); return () => clearTimeout(t); } }, [toast]);
 
   const templates = all.filter(b => b.recorrente);
   const now = new Date();
@@ -1812,11 +1812,11 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
     };
     if (editing) {
       const { error } = await supabase.from("bills_to_pay").update(payload).eq("id", editing.id);
-      if (error) setToast({msg:"Erro ao salvar",type:"error"});
+      if (error) { setToast({msg:`Erro ao salvar: ${error.message}`,type:"error"}); console.error(error); }
       else setToast({msg:"Conta fixa atualizada",type:"success"});
     } else {
       const { error } = await supabase.from("bills_to_pay").insert(payload);
-      if (error) setToast({msg:"Erro ao criar",type:"error"});
+      if (error) { setToast({msg:`Erro ao criar: ${error.message}`,type:"error"}); console.error(error); }
       else setToast({msg:"Conta fixa criada",type:"success"});
     }
     setSaving(false);
