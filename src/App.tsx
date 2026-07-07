@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import type { User } from "@supabase/supabase-js";
 import { supabase, normaliseTx, normaliseAccount } from "./supabase";
 import type { Profile, Account, Transaction, BillToPay, Couple } from "./supabase";
@@ -2024,7 +2025,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
       )}
 
       {/* Form modal */}
-      {showForm && (
+      {showForm && createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setShowForm(false)}>
           <div ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:"20px 20px 0 0",padding:20,maxHeight:"85svh",overflowY:"auto",paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar":"Nova"} {isCardForm ? "cartão de crédito" : "conta fixa"}</div>
@@ -2083,11 +2084,12 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
             </button>
             <button onClick={()=>setShowForm(false)} style={{width:"100%",padding:12,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Cancelar</button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* History modal */}
-      {historyFor && (
+      {historyFor && createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setHistoryFor(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:"20px 20px 0 0",padding:20,maxHeight:"70vh",overflowY:"auto",paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:14}}>Histórico — {historyFor.nome}</div>
@@ -2102,13 +2104,15 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
               ))
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {toast && (
+      {toast && createPortal(
         <div style={{position:"fixed",bottom:90,left:16,right:16,maxWidth:568,margin:"0 auto",background:toast.type==="error"?"#FF3B30":"#1D1D1F",color:"#FFF",padding:"12px 16px",borderRadius:12,fontSize:13,textAlign:"center",zIndex:300}}>
           {toast.msg}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
