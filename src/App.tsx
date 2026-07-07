@@ -1756,6 +1756,13 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
   const [form, setForm] = useState({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0], dia_fechamento:"", limite:"", parcelas_totais:"" });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
+  const formSheetRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (showForm && formSheetRef.current) {
+      formSheetRef.current.scrollTop = 0;
+    }
+  }, [showForm]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2019,7 +2026,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
       {/* Form modal */}
       {showForm && (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setShowForm(false)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:"20px 20px 0 0",padding:20,maxHeight:"85svh",overflowY:"auto",paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
+          <div ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:"20px 20px 0 0",padding:20,maxHeight:"85svh",overflowY:"auto",paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar":"Nova"} {isCardForm ? "cartão de crédito" : "conta fixa"}</div>
             <input placeholder={isCardForm ? "Nome do cartão (ex: Nubank)" : "Nome (ex: Aluguel, Internet)"} value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
