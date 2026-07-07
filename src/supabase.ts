@@ -19,6 +19,7 @@ export interface BillToPay {
   id: string; user_id?: string; account_id?: string; nome?: string;
   data_vencimento?: string; status?: string; valor_base?: number;
   juros_atraso?: number; encargos_cartao?: number; created_at?: string;
+  categoria?: string; dia_vencimento?: number; recorrente?: boolean; template_id?: string | null;
 }
 export interface Couple {
   id: string; user_id_1: string; user_id_2?: string | null;

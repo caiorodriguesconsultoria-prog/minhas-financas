@@ -990,13 +990,13 @@ function HomePage({
       </div>
 
       {/* Bills to pay */}
-      {bills.length > 0 && (
+      {bills.filter(b=>!!b.data_vencimento).length > 0 && (
         <div style={{marginTop:4}}>
           <div className="section-header">
             <span className="section-title">Contas a Pagar</span>
-            <span className="section-link">{bills.filter(b=>(b.status??"").toLowerCase()!=="pago").length} pendente{bills.filter(b=>(b.status??"").toLowerCase()!=="pago").length!==1?"s":""}</span>
+            <span className="section-link">{bills.filter(b=>!!b.data_vencimento && (b.status??"").toLowerCase()!=="pago").length} pendente{bills.filter(b=>!!b.data_vencimento && (b.status??"").toLowerCase()!=="pago").length!==1?"s":""}</span>
           </div>
-          {bills.slice(0,5).map(b=>{
+          {bills.filter(b=>!!b.data_vencimento).slice(0,5).map(b=>{
             const paid    = (b.status ?? "").toLowerCase() === "pago";
             const name    = b.nome ?? "Conta";
             const dueDate = b.data_vencimento ?? "";
@@ -1018,7 +1018,7 @@ function HomePage({
       )}
 
       {/* Transactions */}
-      <div style={{marginTop:bills.length>0?20:4}}>
+      <div style={{marginTop:bills.filter(b=>!!b.data_vencimento).length>0?20:4}}>
         <div className="section-header">
           <span className="section-title">Transações</span>
           <span className="section-link" onClick={()=>setShowFilter(f=>!f)}>Filtrar</span>
@@ -1658,6 +1658,230 @@ function useCoupleLink(userId: string | null) {
   return { couple, partnerUserId, isLinked: !!couple, pendingInviteToken, pendingEmail, cLoading, sendInvite, acceptInvite, cancelInvite, unlinkCouple, refetch: load };
 }
 
+// ─── Contas Fixas page ────────────────────────────────────────────────────────
+
+const CATEGORIAS_FIXAS = ["Moradia","Utilidades","Assinaturas","Transporte","Saúde","Educação","Outros"];
+
+function ContasFixasPage({ userId }: { userId: string }) {
+  const [all, setAll] = useState<BillToPay[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<BillToPay | null>(null);
+  const [historyFor, setHistoryFor] = useState<BillToPay | null>(null);
+  const [form, setForm] = useState({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0] });
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase.from("bills_to_pay").select("*").order("nome", { ascending: true });
+    if (!error) setAll((data ?? []) as BillToPay[]);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (toast) { const t = setTimeout(()=>setToast(null), 3000); return () => clearTimeout(t); } }, [toast]);
+
+  const templates = all.filter(b => b.recorrente);
+  const now = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+
+  const instanceForTemplateThisMonth = (tplId: string) =>
+    all.find(b => b.template_id === tplId && (b.data_vencimento ?? "").startsWith(monthKey));
+
+  const historyForTemplate = (tplId: string) =>
+    all.filter(b => b.template_id === tplId).sort((a,b)=>(b.data_vencimento??"").localeCompare(a.data_vencimento??""));
+
+  async function saveTemplate() {
+    if (!form.nome.trim() || !form.valor_base) { setToast({msg:"Preencha nome e valor",type:"error"}); return; }
+    setSaving(true);
+    const payload = {
+      nome: form.nome.trim(),
+      valor_base: parseFloat(form.valor_base.replace(",",".")),
+      dia_vencimento: parseInt(form.dia_vencimento,10),
+      categoria: form.categoria,
+      recorrente: true,
+      user_id: userId,
+      status: "pendente",
+    };
+    if (editing) {
+      const { error } = await supabase.from("bills_to_pay").update(payload).eq("id", editing.id);
+      if (error) setToast({msg:"Erro ao salvar",type:"error"});
+      else setToast({msg:"Conta fixa atualizada",type:"success"});
+    } else {
+      const { error } = await supabase.from("bills_to_pay").insert(payload);
+      if (error) setToast({msg:"Erro ao criar",type:"error"});
+      else setToast({msg:"Conta fixa criada",type:"success"});
+    }
+    setSaving(false);
+    setShowForm(false);
+    setEditing(null);
+    setForm({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0] });
+    load();
+  }
+
+  async function generateThisMonth(tpl: BillToPay) {
+    if (instanceForTemplateThisMonth(tpl.id)) { setToast({msg:"Já gerada este mês",type:"error"}); return; }
+    const dia = String(tpl.dia_vencimento ?? 5).padStart(2,"0");
+    const data_vencimento = `${monthKey}-${dia}`;
+    const { error } = await supabase.from("bills_to_pay").insert({
+      nome: tpl.nome, valor_base: tpl.valor_base, categoria: tpl.categoria,
+      data_vencimento, status: "pendente", recorrente: false, template_id: tpl.id, user_id: userId,
+    });
+    if (error) setToast({msg:"Erro ao gerar",type:"error"});
+    else setToast({msg:"Despesa do mês gerada",type:"success"});
+    load();
+  }
+
+  async function generateAllPending() {
+    const pending = templates.filter(t => !instanceForTemplateThisMonth(t.id));
+    if (pending.length === 0) { setToast({msg:"Tudo já gerado este mês",type:"success"}); return; }
+    for (const tpl of pending) await generateThisMonth(tpl);
+  }
+
+  async function updateInstanceValue(instance: BillToPay, newValue: number) {
+    const { error } = await supabase.from("bills_to_pay").update({ valor_base: newValue }).eq("id", instance.id);
+    if (error) setToast({msg:"Erro ao atualizar valor",type:"error"});
+    else setToast({msg:"Valor atualizado",type:"success"});
+    load();
+  }
+
+  async function toggleStatus(instance: BillToPay) {
+    const novo = (instance.status ?? "pendente").toLowerCase() === "pago" ? "pendente" : "pago";
+    await supabase.from("bills_to_pay").update({ status: novo }).eq("id", instance.id);
+    load();
+  }
+
+  async function deleteTemplate(tpl: BillToPay) {
+    if (!confirm(`Remover "${tpl.nome}" e todo o histórico de instâncias geradas?`)) return;
+    await supabase.from("bills_to_pay").delete().eq("template_id", tpl.id);
+    await supabase.from("bills_to_pay").delete().eq("id", tpl.id);
+    load();
+  }
+
+  const pendingCount = templates.filter(t => !instanceForTemplateThisMonth(t.id)).length;
+
+  return (
+    <div className="scroll-content page-fade">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div className="section-title" style={{margin:0}}>Contas Fixas</div>
+        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",valor_base:"",dia_vencimento:"5",categoria:CATEGORIAS_FIXAS[0]});setShowForm(true);}}>+ Nova conta fixa</span>
+      </div>
+
+      {templates.length > 0 && pendingCount > 0 && (
+        <div style={{background:"#FFF3E0",borderRadius:14,padding:"12px 14px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:13,color:"#8A5A00"}}>{pendingCount} conta{pendingCount!==1?"s":""} ainda não gerada{pendingCount!==1?"s":""} este mês</span>
+          <button onClick={generateAllPending} style={{background:"#FF9500",color:"#FFF",border:"none",borderRadius:10,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Gerar todas</button>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{textAlign:"center",padding:40,color:"#86868B"}}>Carregando…</div>
+      ) : templates.length === 0 ? (
+        <div style={{textAlign:"center",padding:"40px 20px",color:"#86868B"}}>
+          <div style={{fontSize:40,marginBottom:10}}>📌</div>
+          <div style={{fontSize:14}}>Nenhuma conta fixa cadastrada ainda.<br/>Cadastre aluguel, internet, assinaturas etc. e gere a cobrança de cada mês automaticamente.</div>
+        </div>
+      ) : (
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {templates.map(tpl => {
+            const instance = instanceForTemplateThisMonth(tpl.id);
+            const paid = (instance?.status ?? "").toLowerCase() === "pago";
+            return (
+              <div key={tpl.id} style={{background:"#F5F5F7",borderRadius:16,padding:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>{tpl.nome}</div>
+                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>{tpl.categoria} · vence dia {tpl.dia_vencimento} · ref. {formatBRL(tpl.valor_base ?? 0)}</div>
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <span onClick={()=>{setEditing(tpl);setForm({nome:tpl.nome??"",valor_base:String(tpl.valor_base??""),dia_vencimento:String(tpl.dia_vencimento??5),categoria:tpl.categoria??CATEGORIAS_FIXAS[0]});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
+                    <span onClick={()=>deleteTemplate(tpl)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
+                  </div>
+                </div>
+
+                <div style={{marginTop:10,paddingTop:10,borderTop:"0.5px solid #E5E5E7"}}>
+                  {!instance ? (
+                    <button onClick={()=>generateThisMonth(tpl)} style={{width:"100%",padding:"9px",background:"#007AFF",color:"#FFF",border:"none",borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                      Gerar cobrança deste mês
+                    </button>
+                  ) : (
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <span
+                          onClick={()=>toggleStatus(instance)}
+                          style={{width:20,height:20,borderRadius:6,border:paid?"none":"1.5px solid #C7C7CC",background:paid?"#34C759":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:12,color:"#FFF"}}
+                        >{paid?"✓":""}</span>
+                        <input
+                          type="text" defaultValue={String(instance.valor_base ?? "")}
+                          onBlur={(e)=>{ const v = parseFloat(e.target.value.replace(",",".")); if (!isNaN(v) && v !== instance.valor_base) updateInstanceValue(instance, v); }}
+                          style={{width:90,padding:"6px 8px",border:"1px solid #E5E5E7",borderRadius:8,fontSize:13,fontFamily:"inherit"}}
+                        />
+                        <span style={{fontSize:12,color:paid?"#34C759":"#FF9500",fontWeight:600}}>{paid?"Pago":"Pendente"}</span>
+                      </div>
+                      <span onClick={()=>setHistoryFor(tpl)} style={{fontSize:12,color:"#007AFF",cursor:"pointer"}}>Histórico</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Form modal */}
+      {showForm && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setShowForm(false)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:"20px 20px 0 0",padding:20,paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
+            <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar conta fixa":"Nova conta fixa"}</div>
+            <input placeholder="Nome (ex: Aluguel, Internet)" value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+            <input placeholder="Valor de referência (R$)" value={form.valor_base} onChange={e=>setForm(f=>({...f,valor_base:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+            <div style={{display:"flex",gap:10,marginBottom:10}}>
+              <input placeholder="Dia venc." type="number" min={1} max={31} value={form.dia_vencimento} onChange={e=>setForm(f=>({...f,dia_vencimento:e.target.value}))}
+                style={{width:90,padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit"}} />
+              <select value={form.categoria} onChange={e=>setForm(f=>({...f,categoria:e.target.value}))}
+                style={{flex:1,padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit",background:"#FFF"}}>
+                {CATEGORIAS_FIXAS.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <button disabled={saving} onClick={saveTemplate} style={{width:"100%",padding:14,background:"#007AFF",color:"#FFF",border:"none",borderRadius:14,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:saving?0.6:1}}>
+              {saving?"Salvando…":"Salvar"}
+            </button>
+            <button onClick={()=>setShowForm(false)} style={{width:"100%",padding:12,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {/* History modal */}
+      {historyFor && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setHistoryFor(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:"20px 20px 0 0",padding:20,maxHeight:"70vh",overflowY:"auto",paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
+            <div style={{fontSize:17,fontWeight:600,marginBottom:14}}>Histórico — {historyFor.nome}</div>
+            {historyForTemplate(historyFor.id).length === 0 ? (
+              <div style={{fontSize:13,color:"#86868B"}}>Nenhuma cobrança gerada ainda.</div>
+            ) : (
+              historyForTemplate(historyFor.id).map(h => (
+                <div key={h.id} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+                  <span style={{fontSize:13,color:"#1D1D1F"}}>{h.data_vencimento ? new Date(h.data_vencimento+"T00:00:00").toLocaleDateString("pt-BR",{month:"long",year:"numeric"}) : "—"}</span>
+                  <span style={{fontSize:13,fontWeight:600,color:(h.status??"").toLowerCase()==="pago"?"#34C759":"#FF9500"}}>{formatBRL(h.valor_base??0)} · {(h.status??"pendente")}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div style={{position:"fixed",bottom:90,left:16,right:16,maxWidth:568,margin:"0 auto",background:toast.type==="error"?"#FF3B30":"#1D1D1F",color:"#FFF",padding:"12px 16px",borderRadius:12,fontSize:13,textAlign:"center",zIndex:300}}>
+          {toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Ajustes page ─────────────────────────────────────────────────────────────
 
 type CoupleLinkData = ReturnType<typeof useCoupleLink>;
@@ -1798,7 +2022,7 @@ function AjustesPage({ user, onSignOut, coupleLink }: { user: User; onSignOut: (
 
 // ─── Root component ───────────────────────────────────────────────────────────
 
-type NavPage = "home"|"relatorios"|"cartoes"|"ajustes";
+type NavPage = "home"|"relatorios"|"fixas"|"cartoes"|"ajustes";
 
 export default function App() {
   // ── Auth state ──────────────────────────────────────────────────────────────
@@ -1889,6 +2113,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   const NAV_ITEMS: {icon:string;label:string;page:NavPage}[] = [
     { icon:"🏠", label:"Início",     page:"home" },
     { icon:"📊", label:"Relatórios", page:"relatorios" },
+    { icon:"📌", label:"Fixas",      page:"fixas" },
     { icon:"🗂️", label:"Cartões",   page:"cartoes" },
     { icon:"⚙️", label:"Ajustes",   page:"ajustes" },
   ];
@@ -1967,6 +2192,9 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
         )}
         {navPage === "relatorios" && (
           <RelatoriosPage key="relatorios" transactions={transactions} bills={bills} loading={loading} />
+        )}
+        {navPage === "fixas" && (
+          <ContasFixasPage key="fixas" userId={user.id} />
         )}
         {navPage === "cartoes" && (
           <div className="scroll-content page-fade" style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400,gap:12}}>
