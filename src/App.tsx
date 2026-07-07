@@ -1766,6 +1766,8 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
   const [form, setForm] = useState({ nome:"", valor_base:"", dia_vencimento:"5", primeira_data:"", categoria:CATEGORIAS_FIXAS[0], dia_fechamento:"", limite:"", parcelas_totais:"" });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
+  const [payingBill, setPayingBill] = useState<BillToPay | null>(null);
+  const [payForm, setPayForm] = useState({ data_pagamento:"", motivo_atraso:"", juros:"" });
   const formSheetRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1796,6 +1798,11 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
 
   const isPlanCompleted = (tpl: BillToPay) =>
     !!tpl.parcelas_totais && historyForTemplate(tpl.id).length >= tpl.parcelas_totais;
+
+  const todayIso = now.toISOString().slice(0,10);
+  const isOverdue = (b: BillToPay) =>
+    !!b.data_vencimento && b.data_vencimento < todayIso && (b.status ?? "").toLowerCase() !== "pago";
+  const overdueBills = all.filter(b => !!b.data_vencimento && isOverdue(b));
 
   const isCardForm = form.categoria === "Cartão de Crédito";
 
@@ -1858,6 +1865,22 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
     for (const tpl of pending) await generateThisMonth(tpl);
   }
 
+  // Gera automaticamente as cobranças do mês assim que a página carrega, sem precisar clicar
+  const autoGenRan = useRef(false);
+  useEffect(() => {
+    if (loading || autoGenRan.current || all.length === 0) return;
+    const pending = templates.filter(t => !isPlanCompleted(t) && !instanceForTemplateThisMonth(t.id));
+    if (pending.length > 0) {
+      autoGenRan.current = true;
+      (async () => {
+        for (const tpl of pending) {
+          if (tpl.dia_fechamento) await syncCardInvoice(tpl, monthKey);
+          else await generateThisMonth(tpl);
+        }
+      })();
+    }
+  }, [loading, all]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function updateInstanceValue(instance: BillToPay, newValue: number) {
     const { error } = await supabase.from("bills_to_pay").update({ valor_base: newValue }).eq("id", instance.id);
     if (error) setToast({msg:"Erro ao atualizar valor",type:"error"});
@@ -1866,8 +1889,29 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
   }
 
   async function toggleStatus(instance: BillToPay) {
-    const novo = (instance.status ?? "pendente").toLowerCase() === "pago" ? "pendente" : "pago";
-    await supabase.from("bills_to_pay").update({ status: novo }).eq("id", instance.id);
+    const jaPago = (instance.status ?? "pendente").toLowerCase() === "pago";
+    if (jaPago) {
+      await supabase.from("bills_to_pay").update({ status: "pendente", data_pagamento: null, motivo_atraso: null }).eq("id", instance.id);
+      load();
+      return;
+    }
+    setPayingBill(instance);
+    setPayForm({ data_pagamento: todayIso, motivo_atraso: "", juros: String(instance.juros_atraso ?? "") });
+  }
+
+  async function confirmPayment() {
+    if (!payingBill) return;
+    setSaving(true);
+    const { error } = await supabase.from("bills_to_pay").update({
+      status: "pago",
+      data_pagamento: payForm.data_pagamento || todayIso,
+      motivo_atraso: isOverdue(payingBill) ? (payForm.motivo_atraso || null) : null,
+      juros_atraso: payForm.juros ? parseFloat(payForm.juros.replace(",",".")) : null,
+    }).eq("id", payingBill.id);
+    setSaving(false);
+    if (error) { setToast({msg:`Erro ao registrar pagamento: ${error.message}`,type:"error"}); return; }
+    setToast({msg:"Pagamento registrado",type:"success"});
+    setPayingBill(null);
     load();
   }
 
@@ -1902,6 +1946,20 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
         <div className="section-title" style={{margin:0}}>Contas Fixas</div>
         <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",valor_base:"",dia_vencimento:"5",primeira_data:"",categoria:CATEGORIAS_FIXAS[0],dia_fechamento:"",limite:"",parcelas_totais:""});setShowForm(true);}}>+ Nova conta fixa</span>
       </div>
+
+      {overdueBills.length > 0 && (
+        <div style={{background:"#FFEBEE",borderRadius:14,padding:"12px 14px",marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:600,color:"#D32F2F",marginBottom:6}}>
+            ⚠️ {overdueBills.length} conta{overdueBills.length!==1?"s":""} em atraso
+          </div>
+          {overdueBills.map(b => (
+            <div key={b.id} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#B71C1C",padding:"2px 0"}}>
+              <span>{b.nome}</span>
+              <span>vencia em {b.data_vencimento ? new Date(b.data_vencimento+"T00:00:00").toLocaleDateString("pt-BR") : "—"}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {templates.length > 0 && pendingCount > 0 && (
         <div style={{background:"#FFF3E0",borderRadius:14,padding:"12px 14px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2023,7 +2081,9 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
                           onBlur={(e)=>{ const v = parseFloat(e.target.value.replace(",",".")); if (!isNaN(v) && v !== instance.valor_base) updateInstanceValue(instance, v); }}
                           style={{width:90,padding:"6px 8px",border:"1px solid #E5E5E7",borderRadius:8,fontSize:13,fontFamily:"inherit"}}
                         />
-                        <span style={{fontSize:12,color:paid?"#34C759":"#FF9500",fontWeight:600}}>{paid?"Pago":"Pendente"}</span>
+                        <span style={{fontSize:12,color:paid?"#34C759":isOverdue(instance)?"#FF3B30":"#FF9500",fontWeight:600}}>
+                          {paid?"Pago":isOverdue(instance)?"Atrasada":"Pendente"}
+                        </span>
                       </div>
                       <span onClick={()=>setHistoryFor(tpl)} style={{fontSize:12,color:"#007AFF",cursor:"pointer"}}>Histórico</span>
                     </div>
@@ -2097,6 +2157,38 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
               {saving?"Salvando…":"Salvar"}
             </button>
             <button onClick={()=>setShowForm(false)} style={{width:"100%",padding:12,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Cancelar</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Payment modal */}
+      {payingBill && createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setPayingBill(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:"20px 20px 0 0",padding:20,maxHeight:"85svh",overflowY:"auto",paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
+            <div style={{fontSize:17,fontWeight:600,marginBottom:6}}>Registrar pagamento</div>
+            <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>{payingBill.nome} · {formatBRL((payingBill.valor_base??0)+(payingBill.juros_atraso??0))}</div>
+
+            <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Data do pagamento</label>
+            <input type="date" value={payForm.data_pagamento} onChange={e=>setPayForm(f=>({...f,data_pagamento:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+
+            {isOverdue(payingBill) && (
+              <>
+                <label style={{fontSize:12,color:"#FF3B30",display:"block",marginBottom:4}}>Motivo do atraso</label>
+                <input placeholder="Ex: esqueci, sem saldo, aguardando recebimento..." value={payForm.motivo_atraso} onChange={e=>setPayForm(f=>({...f,motivo_atraso:e.target.value}))}
+                  style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+              </>
+            )}
+
+            <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Juros/multa pagos (opcional, R$)</label>
+            <input placeholder="0,00" value={payForm.juros} onChange={e=>setPayForm(f=>({...f,juros:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:16,fontFamily:"inherit"}} />
+
+            <button disabled={saving} onClick={confirmPayment} style={{width:"100%",padding:14,background:"#34C759",color:"#FFF",border:"none",borderRadius:14,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:saving?0.6:1}}>
+              {saving?"Salvando…":"Confirmar pagamento"}
+            </button>
+            <button onClick={()=>setPayingBill(null)} style={{width:"100%",padding:12,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Cancelar</button>
           </div>
         </div>,
         document.body

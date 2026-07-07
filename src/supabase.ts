@@ -22,6 +22,7 @@ export interface BillToPay {
   juros_atraso?: number; encargos_cartao?: number; created_at?: string;
   categoria?: string; dia_vencimento?: number; recorrente?: boolean; template_id?: string | null;
   dia_fechamento?: number; limite?: number; parcelas_totais?: number | null;
+  data_pagamento?: string | null; motivo_atraso?: string | null;
 }
 export interface Couple {
   id: string; user_id_1: string; user_id_2?: string | null;
