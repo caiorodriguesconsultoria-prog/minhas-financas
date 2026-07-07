@@ -1748,13 +1748,22 @@ function invoiceTotalFor(cardId: string, targetMonthKey: string, transactions: N
   return { total, count };
 }
 
+function daysInMonth(year: number, month0: number): number {
+  return new Date(year, month0 + 1, 0).getDate();
+}
+function dueDateForMonthKey(monthKey: string, dia: number): string {
+  const [y,m] = monthKey.split("-").map(Number);
+  const clamped = Math.min(dia, daysInMonth(y, m-1));
+  return `${monthKey}-${String(clamped).padStart(2,"0")}`;
+}
+
 function ContasFixasPage({ userId, transactions }: { userId: string; transactions: NormTx[] }) {
   const [all, setAll] = useState<BillToPay[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<BillToPay | null>(null);
   const [historyFor, setHistoryFor] = useState<BillToPay | null>(null);
-  const [form, setForm] = useState({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0], dia_fechamento:"", limite:"", parcelas_totais:"" });
+  const [form, setForm] = useState({ nome:"", valor_base:"", dia_vencimento:"5", primeira_data:"", categoria:CATEGORIAS_FIXAS[0], dia_fechamento:"", limite:"", parcelas_totais:"" });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const formSheetRef = useRef<HTMLDivElement>(null);
@@ -1793,12 +1802,16 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
   async function saveTemplate() {
     if (!form.nome.trim()) { setToast({msg:"Preencha o nome",type:"error"}); return; }
     if (!isCardForm && !form.valor_base) { setToast({msg:"Preencha o valor",type:"error"}); return; }
+    if (!isCardForm && !form.primeira_data) { setToast({msg:"Preencha a primeira data de vencimento",type:"error"}); return; }
     if (isCardForm && !form.dia_fechamento) { setToast({msg:"Preencha o dia de fechamento da fatura",type:"error"}); return; }
     setSaving(true);
+    const diaVencimentoCalculado = !isCardForm && form.primeira_data
+      ? new Date(form.primeira_data + "T00:00:00").getDate()
+      : parseInt(form.dia_vencimento,10);
     const payload: Record<string, unknown> = {
       nome: form.nome.trim(),
       valor_base: form.valor_base ? parseFloat(form.valor_base.replace(",",".")) : 0,
-      dia_vencimento: parseInt(form.dia_vencimento,10),
+      dia_vencimento: diaVencimentoCalculado,
       categoria: form.categoria,
       recorrente: true,
       user_id: userId,
@@ -1822,15 +1835,14 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
     setSaving(false);
     setShowForm(false);
     setEditing(null);
-    setForm({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0], dia_fechamento:"", limite:"", parcelas_totais:"" });
+    setForm({ nome:"", valor_base:"", dia_vencimento:"5", primeira_data:"", categoria:CATEGORIAS_FIXAS[0], dia_fechamento:"", limite:"", parcelas_totais:"" });
     load();
   }
 
   async function generateThisMonth(tpl: BillToPay) {
     if (instanceForTemplateThisMonth(tpl.id)) { setToast({msg:"Já gerada este mês",type:"error"}); return; }
     if (isPlanCompleted(tpl)) { setToast({msg:"Parcelamento já concluído",type:"error"}); return; }
-    const dia = String(tpl.dia_vencimento ?? 5).padStart(2,"0");
-    const data_vencimento = `${monthKey}-${dia}`;
+    const data_vencimento = dueDateForMonthKey(monthKey, tpl.dia_vencimento ?? 5);
     const { error } = await supabase.from("bills_to_pay").insert({
       nome: tpl.nome, valor_base: tpl.valor_base, categoria: tpl.categoria,
       data_vencimento, status: "pendente", recorrente: false, template_id: tpl.id, user_id: userId,
@@ -1861,8 +1873,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
 
   async function syncCardInvoice(tpl: BillToPay, targetMonthKey: string) {
     const { total } = invoiceTotalFor(tpl.id, targetMonthKey, transactions, tpl.dia_fechamento ?? 1);
-    const dueDay = String(tpl.dia_vencimento ?? 10).padStart(2,"0");
-    const data_vencimento = `${targetMonthKey}-${dueDay}`;
+    const data_vencimento = dueDateForMonthKey(targetMonthKey, tpl.dia_vencimento ?? 10);
     const existing = all.find(b => b.template_id === tpl.id && (b.data_vencimento ?? "").startsWith(targetMonthKey));
     if (existing) {
       await supabase.from("bills_to_pay").update({ valor_base: total }).eq("id", existing.id);
@@ -1889,7 +1900,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
     <div className="scroll-content page-fade">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <div className="section-title" style={{margin:0}}>Contas Fixas</div>
-        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",valor_base:"",dia_vencimento:"5",categoria:CATEGORIAS_FIXAS[0],dia_fechamento:"",limite:"",parcelas_totais:""});setShowForm(true);}}>+ Nova conta fixa</span>
+        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",valor_base:"",dia_vencimento:"5",primeira_data:"",categoria:CATEGORIAS_FIXAS[0],dia_fechamento:"",limite:"",parcelas_totais:""});setShowForm(true);}}>+ Nova conta fixa</span>
       </div>
 
       {templates.length > 0 && pendingCount > 0 && (
@@ -1932,7 +1943,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
                       <div style={{fontSize:12,color:"#86868B",marginTop:2}}>Fecha dia {tpl.dia_fechamento} · vence dia {tpl.dia_vencimento} · fecha em {daysToClose} dia{daysToClose!==1?"s":""}</div>
                     </div>
                     <div style={{display:"flex",gap:6}}>
-                      <span onClick={()=>{setEditing(tpl);setForm({nome:tpl.nome??"",valor_base:String(tpl.valor_base??""),dia_vencimento:String(tpl.dia_vencimento??5),categoria:tpl.categoria??CATEGORIAS_FIXAS[0],dia_fechamento:String(tpl.dia_fechamento??""),limite:String(tpl.limite??""),parcelas_totais:""});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
+                    <span onClick={()=>{setEditing(tpl);setForm({nome:tpl.nome??"",valor_base:String(tpl.valor_base??""),dia_vencimento:String(tpl.dia_vencimento??5),primeira_data:"",categoria:tpl.categoria??CATEGORIAS_FIXAS[0],dia_fechamento:String(tpl.dia_fechamento??""),limite:String(tpl.limite??""),parcelas_totais:""});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
                       <span onClick={()=>deleteTemplate(tpl)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
                     </div>
                   </div>
@@ -1985,7 +1996,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
                     </div>
                   </div>
                   <div style={{display:"flex",gap:6}}>
-                    <span onClick={()=>{setEditing(tpl);setForm({nome:tpl.nome??"",valor_base:String(tpl.valor_base??""),dia_vencimento:String(tpl.dia_vencimento??5),categoria:tpl.categoria??CATEGORIAS_FIXAS[0],dia_fechamento:"",limite:"",parcelas_totais:String(tpl.parcelas_totais??"")});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
+                    <span onClick={()=>{setEditing(tpl);const d=new Date();const day=Math.min(tpl.dia_vencimento??5,daysInMonth(d.getFullYear(),d.getMonth()));const iso=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;setForm({nome:tpl.nome??"",valor_base:String(tpl.valor_base??""),dia_vencimento:String(tpl.dia_vencimento??5),primeira_data:iso,categoria:tpl.categoria??CATEGORIAS_FIXAS[0],dia_fechamento:"",limite:"",parcelas_totais:String(tpl.parcelas_totais??"")});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
                     <span onClick={()=>deleteTemplate(tpl)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
                   </div>
                 </div>
@@ -2065,9 +2076,12 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
               </>
             ) : (
               <>
-                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Dia de vencimento</label>
-                <input placeholder="Ex: 10" type="number" min={1} max={31} value={form.dia_vencimento} onChange={e=>setForm(f=>({...f,dia_vencimento:e.target.value}))}
-                  style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Primeira data de vencimento</label>
+                <input type="date" value={form.primeira_data} onChange={e=>setForm(f=>({...f,primeira_data:e.target.value}))}
+                  style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:6,fontFamily:"inherit"}} />
+                <div style={{fontSize:12,color:"#86868B",marginBottom:10,lineHeight:1.5}}>
+                  A partir dessa data, os meses seguintes vencem automaticamente no mesmo dia (ajustando sozinho para meses mais curtos, como fevereiro).
+                </div>
                 <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Quantidade de parcelas (opcional)</label>
                 <input placeholder="Deixe em branco para recorrência contínua" type="number" min={1} value={form.parcelas_totais} onChange={e=>setForm(f=>({...f,parcelas_totais:e.target.value}))}
                   style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:6,fontFamily:"inherit"}} />
