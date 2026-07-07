@@ -362,7 +362,7 @@ function useFinanceData(view: ViewType, userId: string | null, partnerUserId: st
       const [profRes, accRes, billRes] = await Promise.all([
         supabase.from("profiles").select("*"),
         accQuery,
-        supabase.from("bills_to_pay").select("*").order("data_vencimento", { ascending: true }).limit(10),
+        supabase.from("bills_to_pay").select("*").order("data_vencimento", { ascending: true }).limit(100),
       ]);
 
       if (run !== tick.current) return;
@@ -540,7 +540,7 @@ function buildMonthlyFlow(txs: NormTx[]): {month:string;income:number;expense:nu
   });
 }
 
-function RelatoriosPage({ transactions, loading }: { transactions: NormTx[]; loading: boolean }) {
+function RelatoriosPage({ transactions, bills, loading }: { transactions: NormTx[]; bills: BillToPay[]; loading: boolean }) {
   const [period, setPeriod] = useState<"mes"|"trim"|"ano">("mes");
   const [slice,  setSlice]  = useState<number|null>(null);
   const [ready,  setReady]  = useState(false);
@@ -597,9 +597,76 @@ function RelatoriosPage({ transactions, loading }: { transactions: NormTx[]; loa
   const segments   = tab==="receitas" ? segInc : segExp;
   const total      = tab==="receitas" ? totalIncome : totalExpense;
 
+  // Despesas a pagar do mês seguinte
+  const nextMonthDate = new Date(now.getFullYear(), now.getMonth()+1, 1);
+  const nextMonthLabel = `${MONTH_NAMES[nextMonthDate.getMonth()]} ${nextMonthDate.getFullYear()}`;
+  const nextMonthBills = bills.filter(b => {
+    if (!b.data_vencimento) return false;
+    const d = new Date(b.data_vencimento + "T00:00:00");
+    return d.getFullYear() === nextMonthDate.getFullYear() && d.getMonth() === nextMonthDate.getMonth();
+  }).sort((a,b) => (a.data_vencimento ?? "").localeCompare(b.data_vencimento ?? ""));
+  const nextMonthTotal = nextMonthBills.reduce((s,b) => s + (b.valor_base ?? 0) + (b.juros_atraso ?? 0) + (b.encargos_cartao ?? 0), 0);
+
+  const buildBillsShareText = () => {
+    const lines = nextMonthBills.map(b => {
+      const valor = (b.valor_base ?? 0) + (b.juros_atraso ?? 0) + (b.encargos_cartao ?? 0);
+      const venc = b.data_vencimento ? new Date(b.data_vencimento + "T00:00:00").toLocaleDateString("pt-BR") : "sem data";
+      return `• ${b.nome ?? "Sem nome"} — ${formatBRL(valor)} (venc. ${venc})`;
+    });
+    return `📋 Despesas a pagar — ${nextMonthLabel}\n\n${lines.join("\n")}\n\nTotal: ${formatBRL(nextMonthTotal)}`;
+  };
+  const shareWhatsApp = () => window.open(`https://wa.me/?text=${encodeURIComponent(buildBillsShareText())}`, "_blank");
+  const shareEmail = () => {
+    const subject = `Despesas a pagar — ${nextMonthLabel}`;
+    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(buildBillsShareText())}`;
+  };
+
   return (
     <div className="scroll-content page-fade">
       <div className="section-title" style={{marginBottom:14}}>Relatórios</div>
+
+      {/* Despesas a pagar — mês seguinte */}
+      <div style={{background:"#F5F5F7",borderRadius:16,padding:16,marginBottom:20}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <span style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>Despesas a pagar — {nextMonthLabel}</span>
+          <span style={{fontSize:13,color:"#86868B"}}>{nextMonthBills.length} conta{nextMonthBills.length!==1?"s":""}</span>
+        </div>
+        {nextMonthBills.length === 0 ? (
+          <div style={{fontSize:13,color:"#86868B",padding:"8px 0"}}>Nenhuma conta cadastrada para {nextMonthLabel}.</div>
+        ) : (
+          <div style={{borderTop:"0.5px solid #E5E5E7",marginBottom:12}}>
+            {nextMonthBills.map(b => {
+              const valor = (b.valor_base ?? 0) + (b.juros_atraso ?? 0) + (b.encargos_cartao ?? 0);
+              const venc = b.data_vencimento ? new Date(b.data_vencimento + "T00:00:00").toLocaleDateString("pt-BR") : "—";
+              return (
+                <div key={b.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+                  <div>
+                    <div style={{fontSize:14,color:"#1D1D1F"}}>{b.nome ?? "Sem nome"}</div>
+                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>Vence em {venc}</div>
+                  </div>
+                  <div style={{fontSize:14,fontWeight:600,color:"#FF3B30"}}>{formatBRL(valor)}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {nextMonthBills.length > 0 && (
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <span style={{fontSize:13,fontWeight:600,color:"#86868B"}}>Total</span>
+            <span style={{fontSize:16,fontWeight:700,color:"#1D1D1F"}}>{formatBRL(nextMonthTotal)}</span>
+          </div>
+        )}
+        {nextMonthBills.length > 0 && (
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={shareWhatsApp} style={{flex:1,padding:"10px",background:"#25D366",color:"#FFF",border:"none",borderRadius:12,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              Compartilhar no WhatsApp
+            </button>
+            <button onClick={shareEmail} style={{flex:1,padding:"10px",background:"#FFFFFF",color:"#1D1D1F",border:"1.5px solid #E5E5E7",borderRadius:12,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              Enviar por e-mail
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Período */}
       <div className="report-period-ctrl">
@@ -1899,7 +1966,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           />
         )}
         {navPage === "relatorios" && (
-          <RelatoriosPage key="relatorios" transactions={transactions} loading={loading} />
+          <RelatoriosPage key="relatorios" transactions={transactions} bills={bills} loading={loading} />
         )}
         {navPage === "cartoes" && (
           <div className="scroll-content page-fade" style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400,gap:12}}>
