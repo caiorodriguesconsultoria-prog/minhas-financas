@@ -1714,7 +1714,7 @@ function useCoupleLink(userId: string | null) {
 
 // ─── Contas Fixas page ────────────────────────────────────────────────────────
 
-const CATEGORIAS_FIXAS = ["Moradia","Utilidades","Assinaturas","Cartão de Crédito","Transporte","Saúde","Educação","Outros"];
+const CATEGORIAS_FIXAS = ["Moradia","Utilidades","Assinaturas","Cartão de Crédito","Dívidas","Transporte","Saúde","Educação","Outros"];
 
 // Calcula a chave "YYYY-MM" da fatura em que uma compra cai, dado o dia de fechamento
 function invoiceMonthKey(dataTransacao: string, diaFechamento: number): string {
@@ -1753,7 +1753,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<BillToPay | null>(null);
   const [historyFor, setHistoryFor] = useState<BillToPay | null>(null);
-  const [form, setForm] = useState({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0], dia_fechamento:"", limite:"" });
+  const [form, setForm] = useState({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0], dia_fechamento:"", limite:"", parcelas_totais:"" });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
 
@@ -1777,6 +1777,9 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
   const historyForTemplate = (tplId: string) =>
     all.filter(b => b.template_id === tplId).sort((a,b)=>(b.data_vencimento??"").localeCompare(a.data_vencimento??""));
 
+  const isPlanCompleted = (tpl: BillToPay) =>
+    !!tpl.parcelas_totais && historyForTemplate(tpl.id).length >= tpl.parcelas_totais;
+
   const isCardForm = form.categoria === "Cartão de Crédito";
 
   async function saveTemplate() {
@@ -1795,7 +1798,9 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
       ...(isCardForm ? {
         dia_fechamento: parseInt(form.dia_fechamento,10),
         limite: form.limite ? parseFloat(form.limite.replace(",",".")) : null,
-      } : {}),
+      } : {
+        parcelas_totais: form.parcelas_totais ? parseInt(form.parcelas_totais,10) : null,
+      }),
     };
     if (editing) {
       const { error } = await supabase.from("bills_to_pay").update(payload).eq("id", editing.id);
@@ -1809,12 +1814,13 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
     setSaving(false);
     setShowForm(false);
     setEditing(null);
-    setForm({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0], dia_fechamento:"", limite:"" });
+    setForm({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0], dia_fechamento:"", limite:"", parcelas_totais:"" });
     load();
   }
 
   async function generateThisMonth(tpl: BillToPay) {
     if (instanceForTemplateThisMonth(tpl.id)) { setToast({msg:"Já gerada este mês",type:"error"}); return; }
+    if (isPlanCompleted(tpl)) { setToast({msg:"Parcelamento já concluído",type:"error"}); return; }
     const dia = String(tpl.dia_vencimento ?? 5).padStart(2,"0");
     const data_vencimento = `${monthKey}-${dia}`;
     const { error } = await supabase.from("bills_to_pay").insert({
@@ -1827,7 +1833,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
   }
 
   async function generateAllPending() {
-    const pending = templates.filter(t => !t.dia_fechamento && !instanceForTemplateThisMonth(t.id));
+    const pending = templates.filter(t => !t.dia_fechamento && !isPlanCompleted(t) && !instanceForTemplateThisMonth(t.id));
     if (pending.length === 0) { setToast({msg:"Tudo já gerado este mês",type:"success"}); return; }
     for (const tpl of pending) await generateThisMonth(tpl);
   }
@@ -1869,13 +1875,13 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
     load();
   }
 
-  const pendingCount = templates.filter(t => !t.dia_fechamento && !instanceForTemplateThisMonth(t.id)).length;
+  const pendingCount = templates.filter(t => !t.dia_fechamento && !isPlanCompleted(t) && !instanceForTemplateThisMonth(t.id)).length;
 
   return (
     <div className="scroll-content page-fade">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <div className="section-title" style={{margin:0}}>Contas Fixas</div>
-        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",valor_base:"",dia_vencimento:"5",categoria:CATEGORIAS_FIXAS[0],dia_fechamento:"",limite:""});setShowForm(true);}}>+ Nova conta fixa</span>
+        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",valor_base:"",dia_vencimento:"5",categoria:CATEGORIAS_FIXAS[0],dia_fechamento:"",limite:"",parcelas_totais:""});setShowForm(true);}}>+ Nova conta fixa</span>
       </div>
 
       {templates.length > 0 && pendingCount > 0 && (
@@ -1918,7 +1924,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
                       <div style={{fontSize:12,color:"#86868B",marginTop:2}}>Fecha dia {tpl.dia_fechamento} · vence dia {tpl.dia_vencimento} · fecha em {daysToClose} dia{daysToClose!==1?"s":""}</div>
                     </div>
                     <div style={{display:"flex",gap:6}}>
-                      <span onClick={()=>{setEditing(tpl);setForm({nome:tpl.nome??"",valor_base:String(tpl.valor_base??""),dia_vencimento:String(tpl.dia_vencimento??5),categoria:tpl.categoria??CATEGORIAS_FIXAS[0],dia_fechamento:String(tpl.dia_fechamento??""),limite:String(tpl.limite??"")});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
+                      <span onClick={()=>{setEditing(tpl);setForm({nome:tpl.nome??"",valor_base:String(tpl.valor_base??""),dia_vencimento:String(tpl.dia_vencimento??5),categoria:tpl.categoria??CATEGORIAS_FIXAS[0],dia_fechamento:String(tpl.dia_fechamento??""),limite:String(tpl.limite??""),parcelas_totais:""});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
                       <span onClick={()=>deleteTemplate(tpl)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
                     </div>
                   </div>
@@ -1958,21 +1964,31 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
               );
             }
 
+            const geradas = historyForTemplate(tpl.id).length;
+            const completed = isPlanCompleted(tpl);
             return (
-              <div key={tpl.id} style={{background:"#F5F5F7",borderRadius:16,padding:14}}>
+              <div key={tpl.id} style={{background:"#F5F5F7",borderRadius:16,padding:14,opacity:completed?0.65:1}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                   <div>
                     <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>{tpl.nome}</div>
-                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>{tpl.categoria} · vence dia {tpl.dia_vencimento} · ref. {formatBRL(tpl.valor_base ?? 0)}</div>
+                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>
+                      {tpl.categoria} · vence dia {tpl.dia_vencimento} · ref. {formatBRL(tpl.valor_base ?? 0)}
+                      {tpl.parcelas_totais ? ` · ${geradas}/${tpl.parcelas_totais} parcelas` : " · corrente"}
+                    </div>
                   </div>
                   <div style={{display:"flex",gap:6}}>
-                    <span onClick={()=>{setEditing(tpl);setForm({nome:tpl.nome??"",valor_base:String(tpl.valor_base??""),dia_vencimento:String(tpl.dia_vencimento??5),categoria:tpl.categoria??CATEGORIAS_FIXAS[0],dia_fechamento:"",limite:""});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
+                    <span onClick={()=>{setEditing(tpl);setForm({nome:tpl.nome??"",valor_base:String(tpl.valor_base??""),dia_vencimento:String(tpl.dia_vencimento??5),categoria:tpl.categoria??CATEGORIAS_FIXAS[0],dia_fechamento:"",limite:"",parcelas_totais:String(tpl.parcelas_totais??"")});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
                     <span onClick={()=>deleteTemplate(tpl)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
                   </div>
                 </div>
 
                 <div style={{marginTop:10,paddingTop:10,borderTop:"0.5px solid #E5E5E7"}}>
-                  {!instance ? (
+                  {completed ? (
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <span style={{fontSize:13,color:"#34C759",fontWeight:600}}>✓ Parcelamento concluído</span>
+                      <span onClick={()=>setHistoryFor(tpl)} style={{fontSize:12,color:"#007AFF",cursor:"pointer"}}>Histórico</span>
+                    </div>
+                  ) : !instance ? (
                     <button onClick={()=>generateThisMonth(tpl)} style={{width:"100%",padding:"9px",background:"#007AFF",color:"#FFF",border:"none",borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
                       Gerar cobrança deste mês
                     </button>
@@ -2040,8 +2056,18 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
                 </div>
               </>
             ) : (
-              <input placeholder="Dia de vencimento" type="number" min={1} max={31} value={form.dia_vencimento} onChange={e=>setForm(f=>({...f,dia_vencimento:e.target.value}))}
-                style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+              <>
+                <input placeholder="Dia de vencimento" type="number" min={1} max={31} value={form.dia_vencimento} onChange={e=>setForm(f=>({...f,dia_vencimento:e.target.value}))}
+                  style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Quantidade de parcelas (opcional)</label>
+                <input placeholder="Deixe em branco para recorrência contínua" type="number" min={1} value={form.parcelas_totais} onChange={e=>setForm(f=>({...f,parcelas_totais:e.target.value}))}
+                  style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:6,fontFamily:"inherit"}} />
+                <div style={{fontSize:12,color:"#86868B",marginBottom:10,lineHeight:1.5}}>
+                  {form.parcelas_totais
+                    ? `Essa despesa vai gerar cobrança por ${form.parcelas_totais} meses e depois parar automaticamente (ex: negociação de dívidas).`
+                    : "Sem quantidade definida, é uma conta corrente: continua gerando cobrança todo mês, indefinidamente."}
+                </div>
+              </>
             )}
 
             <button disabled={saving} onClick={saveTemplate} style={{width:"100%",padding:14,background:"#007AFF",color:"#FFF",border:"none",borderRadius:14,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:saving?0.6:1}}>
