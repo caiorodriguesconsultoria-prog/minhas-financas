@@ -2057,7 +2057,8 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
               </>
             ) : (
               <>
-                <input placeholder="Dia de vencimento" type="number" min={1} max={31} value={form.dia_vencimento} onChange={e=>setForm(f=>({...f,dia_vencimento:e.target.value}))}
+                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Dia de vencimento</label>
+                <input placeholder="Ex: 10" type="number" min={1} max={31} value={form.dia_vencimento} onChange={e=>setForm(f=>({...f,dia_vencimento:e.target.value}))}
                   style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
                 <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Quantidade de parcelas (opcional)</label>
                 <input placeholder="Deixe em branco para recorrência contínua" type="number" min={1} value={form.parcelas_totais} onChange={e=>setForm(f=>({...f,parcelas_totais:e.target.value}))}
