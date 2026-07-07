@@ -1136,12 +1136,13 @@ function getPaymentStyle(meio: string | null): { label:string; badgeClass:string
   return found ? { label:found.label, badgeClass:found.badgeClass } : { label:meio, badgeClass:"badge-debito" };
 }
 
-function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions }: {
+function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, bills }: {
   onClose: () => void;
   onSaved: () => void;
   accounts: NormAccount[];
   userId: string;
   transactions: NormTx[];
+  bills: BillToPay[];
 }) {
   const [form,        setForm]        = useState<TxForm>({ ...EMPTY_FORM, accountId: accounts[0]?.id ?? "" });
   const [saving,      setSaving]      = useState(false);
@@ -1153,6 +1154,10 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions }
   const [reembolsoDesc, setReembolsoDesc] = useState("");
   const [similarTxs,  setSimilarTxs] = useState<NormTx[]>([]);
   const [showSimilar, setShowSimilar] = useState(false);
+  const [cartaoId,    setCartaoId]    = useState("");
+  const [parcelas,    setParcelas]    = useState("1");
+
+  const cards = bills.filter(b => b.recorrente && (b.categoria ?? "").toLowerCase() === "cartão de crédito");
 
   useEffect(() => {
     if (accounts.length > 0 && !form.accountId) {
@@ -1222,6 +1227,7 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions }
     const pessoas    = parseInt(numPessoas) || 1;
     const minhaParte = form.tipo === "despesa" && pessoas > 1 ? valorTotal / pessoas : null;
 
+    const isCredito = form.meio_pagamento === "Crédito";
     const payload: Record<string,unknown> = {
       user_id:        userId,
       descricao,
@@ -1235,6 +1241,7 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions }
       ...(form.beneficiario_real ? { beneficiario_real: form.beneficiario_real } : {}),
       ...(paraQuem ? { beneficiario_real: paraQuem } : {}),
       ...(minhaParte !== null ? { observacao: `Dividido entre ${pessoas} pessoas. Sua parte: R$${minhaParte.toFixed(2)}` } : {}),
+      ...(isCredito && cartaoId ? { cartao_id: cartaoId, parcela_total: Math.max(1, parseInt(parcelas,10) || 1) } : {}),
     };
 
     const { error } = await supabase.from("transactions").insert(payload);
@@ -1431,6 +1438,32 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions }
             ))}
           </div>
         </div>
+        {form.tipo === "despesa" && form.meio_pagamento === "Crédito" && (
+          <div className="form-field">
+            <label className="form-label">Cartão</label>
+            {cards.length === 0 ? (
+              <div style={{fontSize:12,color:"#86868B",padding:"6px 0"}}>
+                Nenhum cartão cadastrado ainda. Cadastre em <strong>Fixas</strong> (categoria "Cartão de Crédito") para vincular a fatura automaticamente.
+              </div>
+            ) : (
+              <select className="form-input" value={cartaoId} onChange={e=>setCartaoId(e.target.value)}>
+                <option value="">Selecione o cartão</option>
+                {cards.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+              </select>
+            )}
+            {cartaoId && (
+              <div style={{marginTop:10}}>
+                <label className="form-label">Parcelas</label>
+                <input className="form-input" type="number" min={1} max={48} value={parcelas} onChange={e=>setParcelas(e.target.value)} />
+                {parseInt(parcelas,10) > 1 && (
+                  <div style={{fontSize:12,color:"#86868B",marginTop:6}}>
+                    {parcelas}x de {formatBRL((parseFloat(form.value||"0"))/(parseInt(parcelas,10)||1))} — cada parcela entra na fatura de um mês seguinte
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         <button className="btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? "Salvando…" : "Salvar Transação"}
         </button>
@@ -1683,13 +1716,44 @@ function useCoupleLink(userId: string | null) {
 
 const CATEGORIAS_FIXAS = ["Moradia","Utilidades","Assinaturas","Cartão de Crédito","Transporte","Saúde","Educação","Outros"];
 
-function ContasFixasPage({ userId }: { userId: string }) {
+// Calcula a chave "YYYY-MM" da fatura em que uma compra cai, dado o dia de fechamento
+function invoiceMonthKey(dataTransacao: string, diaFechamento: number): string {
+  const d = new Date(dataTransacao + "T00:00:00");
+  let y = d.getFullYear(), m = d.getMonth(); // 0-indexed
+  if (d.getDate() > diaFechamento) { m += 1; if (m > 11) { m = 0; y += 1; } }
+  return `${y}-${String(m+1).padStart(2,"0")}`;
+}
+function addMonthsToKey(key: string, n: number): string {
+  const [y,m] = key.split("-").map(Number);
+  let total = (y*12 + (m-1)) + n;
+  const ny = Math.floor(total/12), nm = total%12;
+  return `${ny}-${String(nm+1).padStart(2,"0")}`;
+}
+function monthKeyLabel(key: string): string {
+  const [y,m] = key.split("-").map(Number);
+  return `${MONTH_NAMES[m-1]} ${y}`;
+}
+// Soma o valor de todas as transações de cartão que caem numa fatura específica (respeitando parcelamento)
+function invoiceTotalFor(cardId: string, targetMonthKey: string, transactions: NormTx[], diaFechamento: number): { total: number; count: number } {
+  let total = 0, count = 0;
+  for (const t of transactions) {
+    if (t.cartao_id !== cardId || t.type !== "expense") continue;
+    const first = invoiceMonthKey(t.date, diaFechamento);
+    const n = t.parcela_total ?? 1;
+    for (let i = 0; i < n; i++) {
+      if (addMonthsToKey(first, i) === targetMonthKey) { total += t.value / n; count += 1; break; }
+    }
+  }
+  return { total, count };
+}
+
+function ContasFixasPage({ userId, transactions }: { userId: string; transactions: NormTx[] }) {
   const [all, setAll] = useState<BillToPay[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<BillToPay | null>(null);
   const [historyFor, setHistoryFor] = useState<BillToPay | null>(null);
-  const [form, setForm] = useState({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0] });
+  const [form, setForm] = useState({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0], dia_fechamento:"", limite:"" });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
 
@@ -1713,17 +1777,25 @@ function ContasFixasPage({ userId }: { userId: string }) {
   const historyForTemplate = (tplId: string) =>
     all.filter(b => b.template_id === tplId).sort((a,b)=>(b.data_vencimento??"").localeCompare(a.data_vencimento??""));
 
+  const isCardForm = form.categoria === "Cartão de Crédito";
+
   async function saveTemplate() {
-    if (!form.nome.trim() || !form.valor_base) { setToast({msg:"Preencha nome e valor",type:"error"}); return; }
+    if (!form.nome.trim()) { setToast({msg:"Preencha o nome",type:"error"}); return; }
+    if (!isCardForm && !form.valor_base) { setToast({msg:"Preencha o valor",type:"error"}); return; }
+    if (isCardForm && !form.dia_fechamento) { setToast({msg:"Preencha o dia de fechamento da fatura",type:"error"}); return; }
     setSaving(true);
-    const payload = {
+    const payload: Record<string, unknown> = {
       nome: form.nome.trim(),
-      valor_base: parseFloat(form.valor_base.replace(",",".")),
+      valor_base: form.valor_base ? parseFloat(form.valor_base.replace(",",".")) : 0,
       dia_vencimento: parseInt(form.dia_vencimento,10),
       categoria: form.categoria,
       recorrente: true,
       user_id: userId,
       status: "pendente",
+      ...(isCardForm ? {
+        dia_fechamento: parseInt(form.dia_fechamento,10),
+        limite: form.limite ? parseFloat(form.limite.replace(",",".")) : null,
+      } : {}),
     };
     if (editing) {
       const { error } = await supabase.from("bills_to_pay").update(payload).eq("id", editing.id);
@@ -1737,7 +1809,7 @@ function ContasFixasPage({ userId }: { userId: string }) {
     setSaving(false);
     setShowForm(false);
     setEditing(null);
-    setForm({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0] });
+    setForm({ nome:"", valor_base:"", dia_vencimento:"5", categoria:CATEGORIAS_FIXAS[0], dia_fechamento:"", limite:"" });
     load();
   }
 
@@ -1755,7 +1827,7 @@ function ContasFixasPage({ userId }: { userId: string }) {
   }
 
   async function generateAllPending() {
-    const pending = templates.filter(t => !instanceForTemplateThisMonth(t.id));
+    const pending = templates.filter(t => !t.dia_fechamento && !instanceForTemplateThisMonth(t.id));
     if (pending.length === 0) { setToast({msg:"Tudo já gerado este mês",type:"success"}); return; }
     for (const tpl of pending) await generateThisMonth(tpl);
   }
@@ -1773,6 +1845,23 @@ function ContasFixasPage({ userId }: { userId: string }) {
     load();
   }
 
+  async function syncCardInvoice(tpl: BillToPay, targetMonthKey: string) {
+    const { total } = invoiceTotalFor(tpl.id, targetMonthKey, transactions, tpl.dia_fechamento ?? 1);
+    const dueDay = String(tpl.dia_vencimento ?? 10).padStart(2,"0");
+    const data_vencimento = `${targetMonthKey}-${dueDay}`;
+    const existing = all.find(b => b.template_id === tpl.id && (b.data_vencimento ?? "").startsWith(targetMonthKey));
+    if (existing) {
+      await supabase.from("bills_to_pay").update({ valor_base: total }).eq("id", existing.id);
+    } else {
+      await supabase.from("bills_to_pay").insert({
+        nome: tpl.nome, categoria: tpl.categoria, valor_base: total,
+        data_vencimento, status: "pendente", recorrente: false, template_id: tpl.id, user_id: userId,
+      });
+    }
+    setToast({msg:"Fatura sincronizada",type:"success"});
+    load();
+  }
+
   async function deleteTemplate(tpl: BillToPay) {
     if (!confirm(`Remover "${tpl.nome}" e todo o histórico de instâncias geradas?`)) return;
     await supabase.from("bills_to_pay").delete().eq("template_id", tpl.id);
@@ -1780,13 +1869,13 @@ function ContasFixasPage({ userId }: { userId: string }) {
     load();
   }
 
-  const pendingCount = templates.filter(t => !instanceForTemplateThisMonth(t.id)).length;
+  const pendingCount = templates.filter(t => !t.dia_fechamento && !instanceForTemplateThisMonth(t.id)).length;
 
   return (
     <div className="scroll-content page-fade">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <div className="section-title" style={{margin:0}}>Contas Fixas</div>
-        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",valor_base:"",dia_vencimento:"5",categoria:CATEGORIAS_FIXAS[0]});setShowForm(true);}}>+ Nova conta fixa</span>
+        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",valor_base:"",dia_vencimento:"5",categoria:CATEGORIAS_FIXAS[0],dia_fechamento:"",limite:""});setShowForm(true);}}>+ Nova conta fixa</span>
       </div>
 
       {templates.length > 0 && pendingCount > 0 && (
@@ -1806,8 +1895,69 @@ function ContasFixasPage({ userId }: { userId: string }) {
       ) : (
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {templates.map(tpl => {
+            const isCard = !!tpl.dia_fechamento;
             const instance = instanceForTemplateThisMonth(tpl.id);
             const paid = (instance?.status ?? "").toLowerCase() === "pago";
+
+            if (isCard) {
+              const currentInvoice = invoiceTotalFor(tpl.id, monthKey, transactions, tpl.dia_fechamento!);
+              const nextKey = addMonthsToKey(monthKey, 1);
+              const nextInvoice = invoiceTotalFor(tpl.id, nextKey, transactions, tpl.dia_fechamento!);
+              const usoLimite = tpl.limite ? (currentInvoice.total / tpl.limite) * 100 : null;
+              const daysToClose = (() => {
+                const today = new Date();
+                let close = new Date(today.getFullYear(), today.getMonth(), tpl.dia_fechamento!);
+                if (close < today) close = new Date(today.getFullYear(), today.getMonth()+1, tpl.dia_fechamento!);
+                return Math.ceil((close.getTime()-today.getTime())/86400000);
+              })();
+              return (
+                <div key={tpl.id} style={{background:"#F5F5F7",borderRadius:16,padding:14}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div>
+                      <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>💳 {tpl.nome}</div>
+                      <div style={{fontSize:12,color:"#86868B",marginTop:2}}>Fecha dia {tpl.dia_fechamento} · vence dia {tpl.dia_vencimento} · fecha em {daysToClose} dia{daysToClose!==1?"s":""}</div>
+                    </div>
+                    <div style={{display:"flex",gap:6}}>
+                      <span onClick={()=>{setEditing(tpl);setForm({nome:tpl.nome??"",valor_base:String(tpl.valor_base??""),dia_vencimento:String(tpl.dia_vencimento??5),categoria:tpl.categoria??CATEGORIAS_FIXAS[0],dia_fechamento:String(tpl.dia_fechamento??""),limite:String(tpl.limite??"")});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
+                      <span onClick={()=>deleteTemplate(tpl)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
+                    </div>
+                  </div>
+
+                  <div style={{marginTop:10,paddingTop:10,borderTop:"0.5px solid #E5E5E7"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                      <span style={{fontSize:12,color:"#86868B"}}>Fatura atual ({currentInvoice.count} compra{currentInvoice.count!==1?"s":""})</span>
+                      <span style={{fontSize:15,fontWeight:700,color:"#FF3B30"}}>{formatBRL(currentInvoice.total)}</span>
+                    </div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                      <span style={{fontSize:12,color:"#86868B"}}>Próxima fatura ({monthKeyLabel(nextKey)})</span>
+                      <span style={{fontSize:13,fontWeight:600,color:"#86868B"}}>{formatBRL(nextInvoice.total)}</span>
+                    </div>
+                    {usoLimite !== null && (
+                      <div style={{marginBottom:10}}>
+                        <div style={{height:6,background:"#E5E5E7",borderRadius:3,overflow:"hidden"}}>
+                          <div style={{height:"100%",width:`${Math.min(100,usoLimite)}%`,background:usoLimite>90?"#FF3B30":usoLimite>70?"#FF9500":"#34C759"}} />
+                        </div>
+                        <div style={{fontSize:11,color:"#86868B",marginTop:4}}>{usoLimite.toFixed(0)}% do limite ({formatBRL(tpl.limite!)}) usado nesta fatura</div>
+                      </div>
+                    )}
+                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                      <button onClick={()=>syncCardInvoice(tpl, monthKey)} style={{flex:1,padding:"9px",background:"#007AFF",color:"#FFF",border:"none",borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                        Sincronizar fatura
+                      </button>
+                      {instance && (
+                        <span
+                          onClick={()=>toggleStatus(instance)}
+                          title={paid?"Marcar como pendente":"Marcar como paga"}
+                          style={{width:32,height:32,borderRadius:8,border:paid?"none":"1.5px solid #C7C7CC",background:paid?"#34C759":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:14,color:"#FFF",flexShrink:0}}
+                        >{paid?"✓":""}</span>
+                      )}
+                      <span onClick={()=>setHistoryFor(tpl)} style={{fontSize:12,color:"#007AFF",cursor:"pointer",whiteSpace:"nowrap"}}>Histórico</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
             return (
               <div key={tpl.id} style={{background:"#F5F5F7",borderRadius:16,padding:14}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
@@ -1816,7 +1966,7 @@ function ContasFixasPage({ userId }: { userId: string }) {
                     <div style={{fontSize:12,color:"#86868B",marginTop:2}}>{tpl.categoria} · vence dia {tpl.dia_vencimento} · ref. {formatBRL(tpl.valor_base ?? 0)}</div>
                   </div>
                   <div style={{display:"flex",gap:6}}>
-                    <span onClick={()=>{setEditing(tpl);setForm({nome:tpl.nome??"",valor_base:String(tpl.valor_base??""),dia_vencimento:String(tpl.dia_vencimento??5),categoria:tpl.categoria??CATEGORIAS_FIXAS[0]});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
+                    <span onClick={()=>{setEditing(tpl);setForm({nome:tpl.nome??"",valor_base:String(tpl.valor_base??""),dia_vencimento:String(tpl.dia_vencimento??5),categoria:tpl.categoria??CATEGORIAS_FIXAS[0],dia_fechamento:"",limite:""});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
                     <span onClick={()=>deleteTemplate(tpl)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
                   </div>
                 </div>
@@ -1854,19 +2004,46 @@ function ContasFixasPage({ userId }: { userId: string }) {
       {showForm && (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setShowForm(false)}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:"20px 20px 0 0",padding:20,paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
-            <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar conta fixa":"Nova conta fixa"}</div>
-            <input placeholder="Nome (ex: Aluguel, Internet)" value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
-              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
-            <input placeholder="Valor de referência (R$)" value={form.valor_base} onChange={e=>setForm(f=>({...f,valor_base:e.target.value}))}
+            <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar":"Nova"} {isCardForm ? "cartão de crédito" : "conta fixa"}</div>
+            <input placeholder={isCardForm ? "Nome do cartão (ex: Nubank)" : "Nome (ex: Aluguel, Internet)"} value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
             <div style={{display:"flex",gap:10,marginBottom:10}}>
-              <input placeholder="Dia venc." type="number" min={1} max={31} value={form.dia_vencimento} onChange={e=>setForm(f=>({...f,dia_vencimento:e.target.value}))}
-                style={{width:90,padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit"}} />
               <select value={form.categoria} onChange={e=>setForm(f=>({...f,categoria:e.target.value}))}
                 style={{flex:1,padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit",background:"#FFF"}}>
                 {CATEGORIAS_FIXAS.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
+
+            {!isCardForm && (
+              <input placeholder="Valor de referência (R$)" value={form.valor_base} onChange={e=>setForm(f=>({...f,valor_base:e.target.value}))}
+                style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+            )}
+
+            {isCardForm ? (
+              <>
+                <div style={{display:"flex",gap:10,marginBottom:10}}>
+                  <div style={{flex:1}}>
+                    <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Dia de fechamento</label>
+                    <input placeholder="Ex: 20" type="number" min={1} max={31} value={form.dia_fechamento} onChange={e=>setForm(f=>({...f,dia_fechamento:e.target.value}))}
+                      style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit"}} />
+                  </div>
+                  <div style={{flex:1}}>
+                    <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Dia de vencimento</label>
+                    <input placeholder="Ex: 27" type="number" min={1} max={31} value={form.dia_vencimento} onChange={e=>setForm(f=>({...f,dia_vencimento:e.target.value}))}
+                      style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit"}} />
+                  </div>
+                </div>
+                <input placeholder="Limite do cartão (opcional, R$)" value={form.limite} onChange={e=>setForm(f=>({...f,limite:e.target.value}))}
+                  style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+                <div style={{fontSize:12,color:"#86868B",marginBottom:10,lineHeight:1.5}}>
+                  O valor da fatura será calculado automaticamente a partir das compras lançadas nesse cartão — você não precisa digitar manualmente.
+                </div>
+              </>
+            ) : (
+              <input placeholder="Dia de vencimento" type="number" min={1} max={31} value={form.dia_vencimento} onChange={e=>setForm(f=>({...f,dia_vencimento:e.target.value}))}
+                style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+            )}
+
             <button disabled={saving} onClick={saveTemplate} style={{width:"100%",padding:14,background:"#007AFF",color:"#FFF",border:"none",borderRadius:14,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:saving?0.6:1}}>
               {saving?"Salvando…":"Salvar"}
             </button>
@@ -2215,7 +2392,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           <RelatoriosPage key="relatorios" transactions={transactions} bills={bills} loading={loading} />
         )}
         {navPage === "fixas" && (
-          <ContasFixasPage key="fixas" userId={user.id} />
+          <ContasFixasPage key="fixas" userId={user.id} transactions={transactions} />
         )}
         {navPage === "cartoes" && (
           <div className="scroll-content page-fade" style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400,gap:12,textAlign:"center",padding:"0 24px"}}>
@@ -2274,6 +2451,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
             accounts={accounts}
             userId={user.id}
             transactions={transactions}
+            bills={bills}
             onClose={()=>setModal(null)}
             onSaved={()=>{
               refetch();

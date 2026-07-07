@@ -10,6 +10,7 @@ export interface Transaction {
   data_transacao?: string; valor?: number; descricao?: string;
   tipo?: string; categoria?: string; beneficiario_real?: string;
   meio_pagamento?: string; tipo_escopo?: string; created_at?: string;
+  cartao_id?: string | null; parcela_total?: number;
 }
 export interface Account {
   id: string; user_id?: string; nome?: string; tipo?: string;
@@ -20,6 +21,7 @@ export interface BillToPay {
   data_vencimento?: string; status?: string; valor_base?: number;
   juros_atraso?: number; encargos_cartao?: number; created_at?: string;
   categoria?: string; dia_vencimento?: number; recorrente?: boolean; template_id?: string | null;
+  dia_fechamento?: number; limite?: number;
 }
 export interface Couple {
   id: string; user_id_1: string; user_id_2?: string | null;
@@ -36,6 +38,8 @@ export function normaliseTx(t: Transaction) {
     beneficiario_real: t.beneficiario_real ?? null,
     meio_pagamento: t.meio_pagamento ?? null,
     tipo_escopo: t.tipo_escopo ?? null,
+    cartao_id: t.cartao_id ?? null,
+    parcela_total: t.parcela_total ?? 1,
   } as const;
 }
 export function normaliseAccount(a: Account) {
