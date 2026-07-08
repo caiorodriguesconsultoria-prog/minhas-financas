@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import type { User } from "@supabase/supabase-js";
 import { supabase, normaliseTx, normaliseAccount } from "./supabase";
-import type { Profile, Account, Transaction, BillToPay, Couple } from "./supabase";
+import type { Profile, Account, Transaction, BillToPay, Couple, Investimento, InvestimentoLancamento } from "./supabase";
 import { LoginPage } from "./LoginPage";
 
 // ─── CSS ──────────────────────────────────────────────────────────────────────
@@ -45,9 +45,9 @@ const STYLE = `
   .section-link   { font-size: 14px; color: #007AFF; font-weight: 500; cursor: pointer; }
 
   /* Account cards */
-  .cards-scroll { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; -webkit-overflow-scrolling: touch; scrollbar-width: none; scroll-snap-type: x mandatory; }
+  .cards-scroll { display: flex; gap: 12px; overflow-x: auto; padding: 2px 4px 6px 2px; -webkit-overflow-scrolling: touch; scrollbar-width: none; scroll-snap-type: x proximity; touch-action: pan-x; }
   .cards-scroll::-webkit-scrollbar { display: none; }
-  .account-card { min-width: 150px; flex-shrink: 0; border-radius: 20px; padding: 16px 14px; cursor: pointer; scroll-snap-align: start; transition: transform 0.18s cubic-bezier(0.34,1.2,0.64,1); will-change: transform; }
+  .account-card { min-width: 150px; flex-shrink: 0; border-radius: 20px; padding: 16px 14px; cursor: pointer; scroll-snap-align: start; transition: transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
   .account-card:active { transform: scale(0.96); }
   .card-nubank   { background: linear-gradient(135deg,#8A05BE,#6B21A8); color:#FFF; }
   .card-inter    { background: linear-gradient(135deg,#FF6B00,#E55100); color:#FFF; }
@@ -867,6 +867,7 @@ function HomePage({
   const [selectedBar, setSelectedBar] = useState<number|null>(null);
   const [txFilter,    setTxFilter]    = useState<"todos"|"receita"|"despesa">("todos");
   const [showFilter,  setShowFilter]  = useState(false);
+  const [showAllAccounts, setShowAllAccounts] = useState(false);
   useEffect(() => { const t = setTimeout(() => setBarsReady(true), 60); return () => clearTimeout(t); }, []);
 
   const homeMonthlyFlow = buildMonthlyFlow(transactions);
@@ -901,10 +902,27 @@ function HomePage({
       {/* Accounts */}
       <div className="section-header">
         <span className="section-title">Contas</span>
-        <span className="section-link">Ver tudo</span>
+        <span className="section-link" onClick={()=>setShowAllAccounts(v=>!v)}>{showAllAccounts?"Ver menos":"Ver tudo"}</span>
       </div>
       {loading ? <Spinner /> : accounts.length === 0 ? (
         <EmptyState icon="🏦" title="Nenhuma conta" desc="Adicione contas no Supabase para vê-las aqui." />
+      ) : showAllAccounts ? (
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12}}>
+          <div className="account-card card-total card-enter" style={{animationDelay:"0s",width:"100%"}}>
+            <div className="card-icon">💰</div>
+            <div className="card-bank-name">Total Geral</div>
+            <div className="card-balance">{formatBRL(totalBalance)}</div>
+            <div className="card-label">{accounts.length} conta{accounts.length>1?"s":""} ativa{accounts.length>1?"s":""}</div>
+          </div>
+          {accounts.map((acc, i) => (
+            <div key={acc.id} className={`account-card ${getCardClass(acc.name)} card-enter`} style={{animationDelay:`${(i+1)*0.06}s`,width:"100%"}}>
+              <div className="card-icon">{getCardIcon(acc.name)}</div>
+              <div className="card-bank-name">{acc.name}</div>
+              <div className="card-balance">{formatBRL(acc.balance)}</div>
+              <div className="card-label">{acc.type === "savings" ? "Poupança" : "Conta corrente"}</div>
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="cards-scroll">
           <div className="account-card card-total card-enter" style={{animationDelay:"0s"}}>
@@ -2235,6 +2253,351 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
   );
 }
 
+// ─── Despesas do Mês page ─────────────────────────────────────────────────────
+
+function DespesasMesPage({ bills, accounts }: { bills: BillToPay[]; accounts: NormAccount[] }) {
+  const reportRef = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState<"img"|"pdf"|null>(null);
+
+  const now = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+  const monthLabel = `${MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
+
+  const despesasDoMes = bills.filter(b => !!b.data_vencimento && (b.data_vencimento ?? "").startsWith(monthKey))
+    .sort((a,b)=>(a.data_vencimento??"").localeCompare(b.data_vencimento??""));
+
+  const billValor = (b: BillToPay) => (b.valor_base ?? 0) + (b.juros_atraso ?? 0) + (b.encargos_cartao ?? 0);
+  const pagas = despesasDoMes.filter(b => (b.status??"").toLowerCase()==="pago");
+  const pendentes = despesasDoMes.filter(b => (b.status??"").toLowerCase()!=="pago");
+  const totalPago = pagas.reduce((s,b)=>s+billValor(b),0);
+  const totalPendente = pendentes.reduce((s,b)=>s+billValor(b),0);
+  const totalGeral = totalPago + totalPendente;
+  const saldoContas = accounts.reduce((s,a)=>s+a.balance,0);
+  const cobreDespesas = saldoContas >= totalPendente;
+
+  async function exportImage() {
+    if (!reportRef.current) return;
+    setExporting("img");
+    try {
+      const html2canvas = (await import("html2canvas")).default;
+      const canvas = await html2canvas(reportRef.current, { backgroundColor: "#ffffff", scale: 2 });
+      const link = document.createElement("a");
+      link.download = `despesas-${monthKey}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } finally { setExporting(null); }
+  }
+
+  async function exportPdf() {
+    if (!reportRef.current) return;
+    setExporting("pdf");
+    try {
+      const html2canvas = (await import("html2canvas")).default;
+      const { jsPDF } = await import("jspdf");
+      const canvas = await html2canvas(reportRef.current, { backgroundColor: "#ffffff", scale: 2 });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "px", format: [canvas.width, canvas.height] });
+      pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
+      pdf.save(`despesas-${monthKey}.pdf`);
+    } finally { setExporting(null); }
+  }
+
+  return (
+    <div className="scroll-content page-fade">
+      <div className="section-title" style={{marginBottom:14}}>Despesas do Mês</div>
+
+      <div ref={reportRef} style={{background:"#FFF",padding:4}}>
+        <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F",marginBottom:14}}>Relação de despesas — {monthLabel}</div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+          <div style={{background:"#F5F5F7",borderRadius:14,padding:14}}>
+            <div style={{fontSize:11,color:"#86868B",marginBottom:4}}>Total a pagar</div>
+            <div style={{fontSize:17,fontWeight:700,color:"#FF9500"}}>{formatBRL(totalPendente)}</div>
+          </div>
+          <div style={{background:"#F5F5F7",borderRadius:14,padding:14}}>
+            <div style={{fontSize:11,color:"#86868B",marginBottom:4}}>Já pago</div>
+            <div style={{fontSize:17,fontWeight:700,color:"#34C759"}}>{formatBRL(totalPago)}</div>
+          </div>
+        </div>
+
+        <div style={{background:"#F5F5F7",borderRadius:14,padding:14,marginBottom:12}}>
+          <div style={{fontSize:11,color:"#86868B",marginBottom:4}}>Total geral de despesas do mês</div>
+          <div style={{fontSize:20,fontWeight:700,color:"#1D1D1F"}}>{formatBRL(totalGeral)}</div>
+        </div>
+
+        <div style={{background:cobreDespesas?"#E8F9EA":"#FFEBEE",borderRadius:14,padding:14,marginBottom:20}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+            <span style={{fontSize:12,color:"#86868B"}}>Saldo atual das contas</span>
+            <span style={{fontSize:14,fontWeight:700,color:"#1D1D1F"}}>{formatBRL(saldoContas)}</span>
+          </div>
+          <div style={{fontSize:12,color:cobreDespesas?"#1B7A2E":"#B71C1C",fontWeight:600}}>
+            {cobreDespesas
+              ? `✓ O saldo cobre as despesas pendentes (sobra ${formatBRL(saldoContas-totalPendente)})`
+              : `⚠️ O saldo não cobre as despesas pendentes (falta ${formatBRL(totalPendente-saldoContas)})`}
+          </div>
+        </div>
+
+        <div style={{fontSize:13,fontWeight:600,color:"#86868B",marginBottom:8}}>Detalhamento</div>
+        {despesasDoMes.length === 0 ? (
+          <div style={{fontSize:13,color:"#86868B",padding:"8px 0"}}>Nenhuma despesa registrada para {monthLabel}.</div>
+        ) : (
+          <div style={{borderTop:"0.5px solid #E5E5E7"}}>
+            {despesasDoMes.map(b => {
+              const paga = (b.status??"").toLowerCase()==="pago";
+              return (
+                <div key={b.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+                  <div>
+                    <div style={{fontSize:14,color:"#1D1D1F"}}>{b.nome ?? "Sem nome"}</div>
+                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>
+                      {b.categoria ?? "Outros"} · vence {b.data_vencimento ? new Date(b.data_vencimento+"T00:00:00").toLocaleDateString("pt-BR") : "—"}
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:14,fontWeight:600,color:"#1D1D1F"}}>{formatBRL(billValor(b))}</div>
+                    <div style={{fontSize:11,color:paga?"#34C759":"#FF9500",fontWeight:600}}>{paga?"Pago":"Pendente"}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {despesasDoMes.length > 0 && (
+        <div style={{display:"flex",gap:10,marginTop:20}}>
+          <button onClick={exportImage} disabled={exporting!==null} style={{flex:1,padding:"12px",background:"#007AFF",color:"#FFF",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit",opacity:exporting?0.6:1}}>
+            {exporting==="img"?"Gerando…":"📷 Baixar imagem"}
+          </button>
+          <button onClick={exportPdf} disabled={exporting!==null} style={{flex:1,padding:"12px",background:"#FFFFFF",color:"#1D1D1F",border:"1.5px solid #E5E5E7",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit",opacity:exporting?0.6:1}}>
+            {exporting==="pdf"?"Gerando…":"📄 Baixar PDF"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Investimentos page ───────────────────────────────────────────────────────
+
+const TIPOS_INVESTIMENTO = ["Renda Fixa","Tesouro Direto","Fundos","Ações","Cripto","Poupança","Outros"];
+
+function InvestimentosPage({ userId }: { userId: string }) {
+  const [investimentos, setInvestimentos] = useState<Investimento[]>([]);
+  const [lancamentos, setLancamentos] = useState<InvestimentoLancamento[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Investimento | null>(null);
+  const [form, setForm] = useState({ nome:"", tipo:TIPOS_INVESTIMENTO[0], valor_inicial:"", instituicao:"" });
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
+  const [detailFor, setDetailFor] = useState<Investimento | null>(null);
+  const [lancForm, setLancForm] = useState({ mes:new Date().toISOString().slice(0,7), valor_ganho:"", observacao:"" });
+  const [savingLanc, setSavingLanc] = useState(false);
+  const formSheetRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { if (showForm && formSheetRef.current) formSheetRef.current.scrollTop = 0; }, [showForm]);
+  useEffect(() => { if (toast) { const t = setTimeout(()=>setToast(null), toast.type==="error"?6000:3000); return () => clearTimeout(t); } }, [toast]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [invRes, lancRes] = await Promise.all([
+      supabase.from("investimentos").select("*").order("nome", { ascending: true }),
+      supabase.from("investimento_lancamentos").select("*").order("mes", { ascending: true }),
+    ]);
+    if (!invRes.error) setInvestimentos((invRes.data ?? []) as Investimento[]);
+    if (!lancRes.error) setLancamentos((lancRes.data ?? []) as InvestimentoLancamento[]);
+    setLoading(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const lancamentosFor = (invId: string) => lancamentos.filter(l => l.investimento_id === invId);
+  const totalGanhoFor = (invId: string) => lancamentosFor(invId).reduce((s,l)=>s+(l.valor_ganho??0),0);
+  const totalInvestido = investimentos.reduce((s,i)=>s+(i.valor_inicial??0),0);
+  const totalGanho = investimentos.reduce((s,i)=>s+totalGanhoFor(i.id),0);
+
+  async function saveInvestimento() {
+    if (!form.nome.trim()) { setToast({msg:"Preencha o nome",type:"error"}); return; }
+    setSaving(true);
+    const payload = {
+      nome: form.nome.trim(), tipo: form.tipo,
+      valor_inicial: form.valor_inicial ? parseFloat(form.valor_inicial.replace(",",".")) : 0,
+      instituicao: form.instituicao.trim() || null,
+      user_id: userId,
+    };
+    const { error } = editing
+      ? await supabase.from("investimentos").update(payload).eq("id", editing.id)
+      : await supabase.from("investimentos").insert(payload);
+    setSaving(false);
+    if (error) { setToast({msg:`Erro: ${error.message}`,type:"error"}); return; }
+    setToast({msg: editing ? "Investimento atualizado" : "Investimento criado", type:"success"});
+    setShowForm(false); setEditing(null);
+    setForm({ nome:"", tipo:TIPOS_INVESTIMENTO[0], valor_inicial:"", instituicao:"" });
+    load();
+  }
+
+  async function deleteInvestimento(inv: Investimento) {
+    if (!confirm(`Remover "${inv.nome}" e todo o histórico de rendimentos?`)) return;
+    await supabase.from("investimento_lancamentos").delete().eq("investimento_id", inv.id);
+    await supabase.from("investimentos").delete().eq("id", inv.id);
+    load();
+  }
+
+  async function saveLancamento() {
+    if (!detailFor || !lancForm.valor_ganho) { setToast({msg:"Preencha o valor ganho",type:"error"}); return; }
+    setSavingLanc(true);
+    const existing = lancamentosFor(detailFor.id).find(l => l.mes === lancForm.mes);
+    const payload = {
+      investimento_id: detailFor.id, mes: lancForm.mes,
+      valor_ganho: parseFloat(lancForm.valor_ganho.replace(",",".")),
+      observacao: lancForm.observacao.trim() || null,
+    };
+    const { error } = existing
+      ? await supabase.from("investimento_lancamentos").update(payload).eq("id", existing.id)
+      : await supabase.from("investimento_lancamentos").insert(payload);
+    setSavingLanc(false);
+    if (error) { setToast({msg:`Erro: ${error.message}`,type:"error"}); return; }
+    setToast({msg:"Rendimento registrado",type:"success"});
+    setLancForm({ mes:new Date().toISOString().slice(0,7), valor_ganho:"", observacao:"" });
+    load();
+  }
+
+  async function deleteLancamento(id: string) {
+    await supabase.from("investimento_lancamentos").delete().eq("id", id);
+    load();
+  }
+
+  return (
+    <div className="scroll-content page-fade">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div className="section-title" style={{margin:0}}>Investimentos</div>
+        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",tipo:TIPOS_INVESTIMENTO[0],valor_inicial:"",instituicao:""});setShowForm(true);}}>+ Novo</span>
+      </div>
+
+      {investimentos.length > 0 && (
+        <div style={{background:"#F5F5F7",borderRadius:16,padding:16,marginBottom:16,display:"flex",justifyContent:"space-around",textAlign:"center"}}>
+          <div>
+            <div style={{fontSize:12,color:"#86868B",marginBottom:4}}>Total investido</div>
+            <div style={{fontSize:16,fontWeight:700,color:"#1D1D1F"}}>{formatBRL(totalInvestido)}</div>
+          </div>
+          <div>
+            <div style={{fontSize:12,color:"#86868B",marginBottom:4}}>Rendimento acumulado</div>
+            <div style={{fontSize:16,fontWeight:700,color:"#34C759"}}>{formatBRL(totalGanho)}</div>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{textAlign:"center",padding:40,color:"#86868B"}}>Carregando…</div>
+      ) : investimentos.length === 0 ? (
+        <div style={{textAlign:"center",padding:"40px 20px",color:"#86868B"}}>
+          <div style={{fontSize:40,marginBottom:10}}>📈</div>
+          <div style={{fontSize:14}}>Nenhum investimento cadastrado ainda.<br/>Cadastre e registre os rendimentos mês a mês.</div>
+        </div>
+      ) : (
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {investimentos.map(inv => {
+            const ganho = totalGanhoFor(inv.id);
+            const rentabilidade = inv.valor_inicial ? (ganho / inv.valor_inicial) * 100 : 0;
+            return (
+              <div key={inv.id} onClick={()=>setDetailFor(inv)} style={{background:"#F5F5F7",borderRadius:16,padding:14,cursor:"pointer"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>{inv.nome}</div>
+                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>{inv.tipo}{inv.instituicao?` · ${inv.instituicao}`:""} · aplicado {formatBRL(inv.valor_inicial??0)}</div>
+                  </div>
+                  <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
+                    <span onClick={()=>{setEditing(inv);setForm({nome:inv.nome,tipo:inv.tipo??TIPOS_INVESTIMENTO[0],valor_inicial:String(inv.valor_inicial??""),instituicao:inv.instituicao??""});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
+                    <span onClick={()=>deleteInvestimento(inv)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
+                  </div>
+                </div>
+                <div style={{marginTop:10,paddingTop:10,borderTop:"0.5px solid #E5E5E7",display:"flex",justifyContent:"space-between"}}>
+                  <span style={{fontSize:12,color:"#86868B"}}>Rendimento total</span>
+                  <span style={{fontSize:14,fontWeight:700,color:ganho>=0?"#34C759":"#FF3B30"}}>{formatBRL(ganho)} ({rentabilidade.toFixed(1)}%)</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Form: novo/editar investimento */}
+      {showForm && createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowForm(false)}>
+          <div ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
+            <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar":"Novo"} investimento</div>
+            <input placeholder="Nome (ex: CDB Banco X, Tesouro IPCA+)" value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+            <select value={form.tipo} onChange={e=>setForm(f=>({...f,tipo:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit",background:"#FFF"}}>
+              {TIPOS_INVESTIMENTO.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <input placeholder="Instituição (opcional)" value={form.instituicao} onChange={e=>setForm(f=>({...f,instituicao:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+            <input placeholder="Valor investido inicialmente (R$)" value={form.valor_inicial} onChange={e=>setForm(f=>({...f,valor_inicial:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:16,fontFamily:"inherit"}} />
+            <button disabled={saving} onClick={saveInvestimento} style={{width:"100%",padding:14,background:"#007AFF",color:"#FFF",border:"none",borderRadius:14,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:saving?0.6:1}}>
+              {saving?"Salvando…":"Salvar"}
+            </button>
+            <button onClick={()=>setShowForm(false)} style={{width:"100%",padding:12,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Cancelar</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Detail: lançamentos mensais */}
+      {detailFor && createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setDetailFor(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
+            <div style={{fontSize:17,fontWeight:600,marginBottom:4}}>{detailFor.nome}</div>
+            <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>Rendimento acumulado: <strong style={{color:"#34C759"}}>{formatBRL(totalGanhoFor(detailFor.id))}</strong></div>
+
+            <div style={{background:"#F5F5F7",borderRadius:14,padding:14,marginBottom:16}}>
+              <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>Registrar rendimento do mês</div>
+              <input type="month" value={lancForm.mes} onChange={e=>setLancForm(f=>({...f,mes:e.target.value}))}
+                style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,marginBottom:8,fontFamily:"inherit"}} />
+              <input placeholder="Valor ganho no mês (R$)" value={lancForm.valor_ganho} onChange={e=>setLancForm(f=>({...f,valor_ganho:e.target.value}))}
+                style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,marginBottom:8,fontFamily:"inherit"}} />
+              <input placeholder="Observação (opcional)" value={lancForm.observacao} onChange={e=>setLancForm(f=>({...f,observacao:e.target.value}))}
+                style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,marginBottom:10,fontFamily:"inherit"}} />
+              <button disabled={savingLanc} onClick={saveLancamento} style={{width:"100%",padding:11,background:"#34C759",color:"#FFF",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit",opacity:savingLanc?0.6:1}}>
+                {savingLanc?"Salvando…":"Salvar rendimento"}
+              </button>
+            </div>
+
+            <div style={{fontSize:13,fontWeight:600,color:"#86868B",marginBottom:8}}>Histórico mensal</div>
+            {lancamentosFor(detailFor.id).length === 0 ? (
+              <div style={{fontSize:13,color:"#86868B",padding:"8px 0"}}>Nenhum rendimento registrado ainda.</div>
+            ) : (
+              [...lancamentosFor(detailFor.id)].reverse().map(l => (
+                <div key={l.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+                  <div>
+                    <div style={{fontSize:13,color:"#1D1D1F"}}>{monthKeyLabel(l.mes)}</div>
+                    {l.observacao && <div style={{fontSize:11,color:"#86868B",marginTop:2}}>{l.observacao}</div>}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:14,fontWeight:600,color:l.valor_ganho>=0?"#34C759":"#FF3B30"}}>{formatBRL(l.valor_ganho)}</span>
+                    <span onClick={()=>deleteLancamento(l.id)} style={{cursor:"pointer",fontSize:14}}>🗑️</span>
+                  </div>
+                </div>
+              ))
+            )}
+
+            <button onClick={()=>setDetailFor(null)} style={{width:"100%",padding:12,marginTop:16,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Fechar</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {toast && createPortal(
+        <div style={{position:"fixed",bottom:90,left:16,right:16,maxWidth:568,margin:"0 auto",background:toast.type==="error"?"#FF3B30":"#1D1D1F",color:"#FFF",padding:"12px 16px",borderRadius:12,fontSize:13,textAlign:"center",zIndex:300}}>
+          {toast.msg}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
 // ─── Ajustes page ─────────────────────────────────────────────────────────────
 
 type CoupleLinkData = ReturnType<typeof useCoupleLink>;
@@ -2506,14 +2869,14 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           {navPage === "home" && (
             <div className="seg-ctrl">
               <button className={`seg-btn${view==="geral" ?" active":""}`} onClick={()=>setView("geral")}>Visão Geral</button>
-              <button className={`seg-btn${view==="eu"    ?" active":""}`} onClick={()=>setView("eu")}>Minhas Finanças</button>
-              <button className={`seg-btn${view==="esposa"?" active":""}`} onClick={()=>setView("esposa")}>Esposa</button>
+              <button className={`seg-btn${view==="eu"    ?" active":""}`} onClick={()=>setView("eu")}>Despesas do Mês</button>
+              <button className={`seg-btn${view==="esposa"?" active":""}`} onClick={()=>setView("esposa")}>Investimentos</button>
             </div>
           )}
         </div>
 
-        {/* Summary bar (home only) */}
-        {navPage === "home" && (
+        {/* Summary bar (home, general view only) */}
+        {navPage === "home" && view === "geral" && (
           <div className="summary-bar">
             <div className="summary-item">
               <div className="summary-label">Receitas</div>
@@ -2531,7 +2894,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
         )}
 
         {/* Pages */}
-        {navPage === "home" && (
+        {navPage === "home" && view === "geral" && (
           <HomePage
             key={`home-${view}`}
             accounts={accounts}
@@ -2542,6 +2905,12 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
             refetch={refetch}
             onEditTx={setEditTx}
           />
+        )}
+        {navPage === "home" && view === "eu" && (
+          <DespesasMesPage key="despesas-mes" bills={bills} accounts={accounts} />
+        )}
+        {navPage === "home" && view === "esposa" && (
+          <InvestimentosPage key="investimentos" userId={user.id} />
         )}
         {navPage === "relatorios" && (
           <RelatoriosPage key="relatorios" transactions={transactions} bills={bills} loading={loading} />

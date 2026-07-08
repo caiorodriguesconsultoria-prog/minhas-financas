@@ -29,6 +29,14 @@ export interface Couple {
   invited_email?: string | null; status: string;
   invite_token: string; created_at?: string;
 }
+export interface Investimento {
+  id: string; user_id?: string; nome: string; tipo?: string;
+  valor_inicial?: number; instituicao?: string; created_at?: string;
+}
+export interface InvestimentoLancamento {
+  id: string; investimento_id: string; mes: string;
+  valor_ganho: number; observacao?: string | null; created_at?: string;
+}
 export function normaliseTx(t: Transaction) {
   const isIncome = t.tipo === "receita" || t.tipo === "income" || t.tipo === "entrada";
   return {
