@@ -2358,7 +2358,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
                   <div>
                     <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>{tpl.nome}</div>
                     <div style={{fontSize:12,color:"#86868B",marginTop:2}}>
-                      {tpl.categoria} · {formaLabel}{!isCardLinked ? ` · vence dia ${tpl.dia_vencimento}` : ""} · ref. {formatBRL(tpl.valor_base ?? 0)}
+                      {tpl.categoria} · {formaLabel}{!isCardLinked ? ` · vence ${instance?.data_vencimento ? new Date(instance.data_vencimento+"T00:00:00").toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}) : `dia ${tpl.dia_vencimento}`}` : ""} · ref. {formatBRL(tpl.valor_base ?? 0)}
                       {!isCardLinked && (tpl.parcelas_totais ? ` · ${geradas}/${tpl.parcelas_totais} parcelas` : " · corrente")}
                     </div>
                     {tpl.anexo_url && (
