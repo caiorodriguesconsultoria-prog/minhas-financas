@@ -2070,16 +2070,22 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
         // são todas pré-geradas), usa o dado real em vez de estimar.
         const real = all.find(b => b.template_id === t.id && (b.data_vencimento ?? "").startsWith(previewMonth));
         if (real) {
-          return { nome: t.nome ?? "Conta", valor: real.valor_base ?? 0, data: real.data_vencimento ?? dueDateForMonthKey(previewMonth, t.dia_vencimento ?? 5) };
+          let parcela: string | null = null;
+          if (t.parcelas_totais) {
+            const ordenado = historyForTemplate(t.id).sort((a,b)=>(a.data_vencimento??"").localeCompare(b.data_vencimento??""));
+            const posicao = ordenado.findIndex(h => h.id === real.id) + 1;
+            if (posicao > 0) parcela = `${posicao}/${t.parcelas_totais}`;
+          }
+          return { nome: t.nome ?? "Conta", valor: real.valor_base ?? 0, data: real.data_vencimento ?? dueDateForMonthKey(previewMonth, t.dia_vencimento ?? 5), parcela };
         }
         // Conta corrente (sem total de parcelas) ainda não gerada tão à frente: estima pela referência
         if (!t.parcelas_totais) {
-          return { nome: t.nome ?? "Conta", valor: t.valor_base ?? 0, data: dueDateForMonthKey(previewMonth, t.dia_vencimento ?? 5) };
+          return { nome: t.nome ?? "Conta", valor: t.valor_base ?? 0, data: dueDateForMonthKey(previewMonth, t.dia_vencimento ?? 5), parcela: null as string | null };
         }
         // Plano com total definido e sem cobrança real nesse mês: já encerrou antes desse mês
         return null;
       })
-      .filter((x): x is { nome:string; valor:number; data:string } => x !== null);
+      .filter((x): x is { nome:string; valor:number; data:string; parcela: string | null } => x !== null);
 
     const cardsPreview = cardsSummary.map(card => ({
       nome: card.nome ?? "Cartão",
@@ -2310,7 +2316,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
             <>
               {previewData.fixedPreview.map((f,i) => (
                 <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"4px 0"}}>
-                  <span style={{color:"#1D1D1F"}}>{f.nome} <span style={{color:"#86868B",fontSize:11}}>({new Date(f.data+"T00:00:00").toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric"})})</span></span>
+                  <span style={{color:"#1D1D1F"}}>{f.nome} <span style={{color:"#86868B",fontSize:11}}>({new Date(f.data+"T00:00:00").toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric"})}{f.parcela ? ` · ${f.parcela}` : ""})</span></span>
                   <span style={{color:"#1D1D1F",fontWeight:600}}>{formatBRL(f.valor)}</span>
                 </div>
               ))}
