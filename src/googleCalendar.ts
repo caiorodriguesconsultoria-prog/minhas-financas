@@ -139,11 +139,19 @@ export async function syncBillToCalendar(userId: string, input: CalendarEventInp
   const token = await getValidAccessToken(userId);
   if (!token) throw new Error("Google Agenda não conectado");
 
+  // Para eventos de dia inteiro, o Google exige que "end.date" seja o dia SEGUINTE ao início
+  // (a data final é exclusiva). Usar a mesma data em start e end cria um evento de duração
+  // zero que a API aceita sem erro, mas geralmente não aparece na visualização do mês.
+  const startDate = new Date(input.date + "T00:00:00");
+  const endDate = new Date(startDate);
+  endDate.setDate(endDate.getDate() + 1);
+  const endDateStr = endDate.toISOString().slice(0, 10);
+
   const eventBody = {
     summary: `💰 ${input.title} — ${input.amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}`,
     description: input.notes ?? "Lançamento automático do app Minhas Finanças.",
     start: { date: input.date },
-    end: { date: input.date },
+    end: { date: endDateStr },
     reminders: { useDefault: false, overrides: [{ method: "popup", minutes: 24 * 60 }] },
     extendedProperties: { private: { billId: input.billId } },
   };
