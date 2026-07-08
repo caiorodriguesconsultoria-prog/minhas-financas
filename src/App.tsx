@@ -2063,14 +2063,21 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
 
   const previewData = (() => {
     if (!isPreview || !previewMonth) return null;
-    const monthsAhead = monthsBetween(monthKey, previewMonth);
     const fixedPreview = templates
       .filter(t => t.forma_pagamento !== "cartao")
       .map(t => {
-        const geradas = historyForTemplate(t.id).length;
-        const restantes = t.parcelas_totais ? t.parcelas_totais - geradas : null;
-        const aindaAtivo = restantes === null || monthsAhead < restantes;
-        return aindaAtivo ? { nome: t.nome ?? "Conta", valor: t.valor_base ?? 0, data: dueDateForMonthKey(previewMonth, t.dia_vencimento ?? 5) } : null;
+        // Se a parcela desse mês já foi gerada de verdade no banco (parcelas com total definido
+        // são todas pré-geradas), usa o dado real em vez de estimar.
+        const real = all.find(b => b.template_id === t.id && (b.data_vencimento ?? "").startsWith(previewMonth));
+        if (real) {
+          return { nome: t.nome ?? "Conta", valor: real.valor_base ?? 0, data: real.data_vencimento ?? dueDateForMonthKey(previewMonth, t.dia_vencimento ?? 5) };
+        }
+        // Conta corrente (sem total de parcelas) ainda não gerada tão à frente: estima pela referência
+        if (!t.parcelas_totais) {
+          return { nome: t.nome ?? "Conta", valor: t.valor_base ?? 0, data: dueDateForMonthKey(previewMonth, t.dia_vencimento ?? 5) };
+        }
+        // Plano com total definido e sem cobrança real nesse mês: já encerrou antes desse mês
+        return null;
       })
       .filter((x): x is { nome:string; valor:number; data:string } => x !== null);
 
