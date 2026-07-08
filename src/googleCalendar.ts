@@ -1,11 +1,8 @@
-// Integração com Google Agenda (Google Calendar API) via Google Identity Services (GIS).
-// Fluxo 100% client-side: o usuário autoriza uma vez, recebemos um access_token temporário
-// (válido por ~1h) e usamos para criar/atualizar eventos. Sem backend, sem refresh token —
-// se o token expirar, basta clicar em "Conectar" de novo.
-//
-// Para sobreviver à limpeza de localStorage que o iOS às vezes faz em PWAs instalados na tela
-// inicial, guardamos uma cópia do token (e sua validade) no Supabase, e restauramos para o
-// localStorage automaticamente quando o app carrega — desde que o token ainda esteja válido.
+// Integração com Google Agenda (Google Calendar API).
+// Usa o fluxo de "authorization code" do Google: ao conectar, trocamos um código por um
+// access_token (curto, ~1h) E um refresh_token (de longa duração). O refresh_token fica
+// guardado no Supabase, e sempre que o access_token expira, uma função de servidor
+// (api/google-token.ts) o renova silenciosamente — sem precisar reconectar manualmente.
 
 import { supabase } from "./supabase";
 
@@ -21,7 +18,7 @@ interface StoredToken {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const google: any;
 
-function getStored(): StoredToken | null {
+function getStoredLocal(): StoredToken | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
@@ -31,12 +28,24 @@ function getStored(): StoredToken | null {
   } catch { return null; }
 }
 
-export function isGoogleCalendarConnected(): boolean {
-  return !!getStored();
+function saveLocal(access_token: string, expires_in: number) {
+  const expires_at = Date.now() + expires_in * 1000 - 60000;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ access_token, expires_at }));
+  return expires_at;
 }
 
-// Chamar no carregamento do app: se o localStorage perdeu o token mas o Supabase tem uma
-// cópia ainda válida (dentro da 1h), restaura localmente sem precisar reconectar.
+// Checagem rápida e local (sem chamada de rede) — útil para UI que não precisa ser 100% exata.
+export function isGoogleCalendarConnected(): boolean {
+  return !!getStoredLocal();
+}
+
+// Checagem "de verdade": existe um refresh_token salvo no Supabase? Se sim, o app consegue
+// renovar sozinho sempre que precisar, mesmo que o token local tenha expirado ou sumido.
+export async function hasGoogleCalendarRefreshToken(userId: string): Promise<boolean> {
+  const { data } = await supabase.from("profiles").select("gcal_refresh_token").eq("id", userId).maybeSingle();
+  return !!data?.gcal_refresh_token;
+}
+
 export async function restoreGoogleCalendarFromServer(userId: string): Promise<void> {
   if (isGoogleCalendarConnected()) return;
   const { data } = await supabase.from("profiles").select("gcal_access_token, gcal_expires_at").eq("id", userId).maybeSingle();
@@ -47,7 +56,7 @@ export async function restoreGoogleCalendarFromServer(userId: string): Promise<v
 
 export async function disconnectGoogleCalendar(userId?: string): Promise<void> {
   localStorage.removeItem(STORAGE_KEY);
-  if (userId) await supabase.from("profiles").update({ gcal_access_token: null, gcal_expires_at: null }).eq("id", userId);
+  if (userId) await supabase.from("profiles").update({ gcal_access_token: null, gcal_expires_at: null, gcal_refresh_token: null }).eq("id", userId);
 }
 
 export function connectGoogleCalendar(userId: string): Promise<void> {
@@ -56,20 +65,58 @@ export function connectGoogleCalendar(userId: string): Promise<void> {
       reject(new Error("Google Identity Services ainda não carregou. Tente novamente em alguns segundos."));
       return;
     }
-    const client = google.accounts.oauth2.initTokenClient({
+    const client = google.accounts.oauth2.initCodeClient({
       client_id: CLIENT_ID,
       scope: SCOPE,
-      callback: async (resp: { access_token?: string; expires_in?: number; error?: string }) => {
-        if (resp.error || !resp.access_token) { reject(new Error(resp.error || "Falha ao autorizar")); return; }
-        const expiresAt = Date.now() + (resp.expires_in ?? 3600) * 1000 - 60000;
-        const stored: StoredToken = { access_token: resp.access_token, expires_at: expiresAt };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-        await supabase.from("profiles").update({ gcal_access_token: resp.access_token, gcal_expires_at: expiresAt }).eq("id", userId);
-        resolve();
+      ux_mode: "popup",
+      callback: async (resp: { code?: string; error?: string }) => {
+        if (resp.error || !resp.code) { reject(new Error(resp.error || "Falha ao autorizar")); return; }
+        try {
+          const tokenRes = await fetch("/api/google-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: resp.code }),
+          });
+          const data = await tokenRes.json();
+          if (!tokenRes.ok) { reject(new Error(data.error ?? "Erro ao trocar código por token")); return; }
+
+          const expiresAt = saveLocal(data.access_token, data.expires_in ?? 3600);
+          await supabase.from("profiles").update({
+            gcal_access_token: data.access_token,
+            gcal_expires_at: expiresAt,
+            ...(data.refresh_token ? { gcal_refresh_token: data.refresh_token } : {}),
+          }).eq("id", userId);
+          resolve();
+        } catch (e) {
+          reject(e instanceof Error ? e : new Error("Erro ao conectar"));
+        }
       },
     });
-    client.requestAccessToken();
+    client.requestCode();
   });
+}
+
+// Retorna um access_token válido, renovando silenciosamente via refresh_token se preciso.
+// Retorna null se nunca foi conectado (não há refresh_token salvo).
+async function getValidAccessToken(userId: string): Promise<string | null> {
+  const local = getStoredLocal();
+  if (local) return local.access_token;
+
+  const { data } = await supabase.from("profiles").select("gcal_refresh_token").eq("id", userId).maybeSingle();
+  const refreshToken = data?.gcal_refresh_token;
+  if (!refreshToken) return null;
+
+  const tokenRes = await fetch("/api/google-token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+  const tokenData = await tokenRes.json();
+  if (!tokenRes.ok) return null;
+
+  const expiresAt = saveLocal(tokenData.access_token, tokenData.expires_in ?? 3600);
+  await supabase.from("profiles").update({ gcal_access_token: tokenData.access_token, gcal_expires_at: expiresAt }).eq("id", userId);
+  return tokenData.access_token;
 }
 
 export interface CalendarEventInput {
@@ -80,7 +127,6 @@ export interface CalendarEventInput {
   notes?: string;
 }
 
-// Busca um evento já criado anteriormente para este billId (usando extendedProperties como marcador)
 async function findExistingEvent(token: string, billId: string): Promise<string | null> {
   const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?privateExtendedProperty=${encodeURIComponent(`billId=${billId}`)}&maxResults=1`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -89,9 +135,9 @@ async function findExistingEvent(token: string, billId: string): Promise<string 
   return data.items?.[0]?.id ?? null;
 }
 
-export async function syncBillToCalendar(input: CalendarEventInput): Promise<void> {
-  const stored = getStored();
-  if (!stored) throw new Error("Google Agenda não conectado");
+export async function syncBillToCalendar(userId: string, input: CalendarEventInput): Promise<void> {
+  const token = await getValidAccessToken(userId);
+  if (!token) throw new Error("Google Agenda não conectado");
 
   const eventBody = {
     summary: `💰 ${input.title} — ${input.amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}`,
@@ -102,14 +148,14 @@ export async function syncBillToCalendar(input: CalendarEventInput): Promise<voi
     extendedProperties: { private: { billId: input.billId } },
   };
 
-  const existingId = await findExistingEvent(stored.access_token, input.billId);
+  const existingId = await findExistingEvent(token, input.billId);
   const url = existingId
     ? `https://www.googleapis.com/calendar/v3/calendars/primary/events/${existingId}`
     : `https://www.googleapis.com/calendar/v3/calendars/primary/events`;
 
   const res = await fetch(url, {
     method: existingId ? "PATCH" : "POST",
-    headers: { Authorization: `Bearer ${stored.access_token}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(eventBody),
   });
   if (!res.ok) {

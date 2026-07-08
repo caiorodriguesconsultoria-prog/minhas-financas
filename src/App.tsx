@@ -4,7 +4,7 @@ import type { User } from "@supabase/supabase-js";
 import { supabase, normaliseTx, normaliseAccount } from "./supabase";
 import type { Profile, Account, Transaction, BillToPay, Couple, Investimento, InvestimentoLancamento } from "./supabase";
 import { LoginPage } from "./LoginPage";
-import { isGoogleCalendarConnected, connectGoogleCalendar, disconnectGoogleCalendar, syncBillToCalendar, restoreGoogleCalendarFromServer } from "./googleCalendar";
+import { connectGoogleCalendar, disconnectGoogleCalendar, syncBillToCalendar, restoreGoogleCalendarFromServer, hasGoogleCalendarRefreshToken } from "./googleCalendar";
 import { isFaceIdSupported, isFaceIdEnabled, enableFaceId, disableFaceId, unlockWithFaceId, restoreFaceIdFromServer } from "./faceIdLock";
 
 // Atualiza os dados automaticamente sempre que o app volta a ficar visível
@@ -2080,8 +2080,8 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
             user_id: userId,
           }).select().single();
           if (instErr) console.error(instErr);
-          else if (isGoogleCalendarConnected() && firstInstance) {
-            syncBillToCalendar({ billId: firstInstance.id, title: form.nome.trim(), date: form.primeira_data, amount: parseFloat(form.valor_base.replace(",",".")||"0") }).catch(()=>{});
+          else if (firstInstance) {
+            syncBillToCalendar(userId, { billId: firstInstance.id, title: form.nome.trim(), date: form.primeira_data, amount: parseFloat(form.valor_base.replace(",",".")||"0") }).catch(()=>{});
           }
         }
         setToast({msg:"Conta fixa criada",type:"success"});
@@ -2107,8 +2107,8 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
     if (error) setToast({msg:"Erro ao gerar",type:"error"});
     else {
       setToast({msg:"Despesa do mês gerada",type:"success"});
-      if (isGoogleCalendarConnected() && created) {
-        syncBillToCalendar({ billId: created.id, title: tpl.nome ?? "Despesa fixa", date: data_vencimento, amount: tpl.valor_base ?? 0 }).catch(()=>{});
+      if (created) {
+        syncBillToCalendar(userId, { billId: created.id, title: tpl.nome ?? "Despesa fixa", date: data_vencimento, amount: tpl.valor_base ?? 0 }).catch(()=>{});
       }
     }
     load();
@@ -2506,8 +2506,8 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
       }).select().single();
       instanceId = createdInstance?.id ?? null;
     }
-    if (isGoogleCalendarConnected() && instanceId) {
-      syncBillToCalendar({ billId: instanceId, title: `Fatura ${card.nome}`, date: data_vencimento, amount: total }).catch(()=>{});
+    if (instanceId) {
+      syncBillToCalendar(userId, { billId: instanceId, title: `Fatura ${card.nome}`, date: data_vencimento, amount: total }).catch(()=>{});
     }
     setToast({msg:"Fatura sincronizada",type:"success"});
     load();
@@ -3184,7 +3184,7 @@ function AjustesPage({ user, onSignOut, coupleLink }: { user: User; onSignOut: (
   const [gcalConnected, setGcalConnected] = useState(false);
   const [gcalLoading, setGcalLoading] = useState(false);
   const [gcalMsg, setGcalMsg] = useState<string|null>(null);
-  useEffect(() => { setGcalConnected(isGoogleCalendarConnected()); }, []);
+  useEffect(() => { hasGoogleCalendarRefreshToken(user.id).then(setGcalConnected); }, []);
 
   async function handleConnectGoogle() {
     setGcalLoading(true); setGcalMsg(null);
