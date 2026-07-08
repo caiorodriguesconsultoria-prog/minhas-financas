@@ -1815,7 +1815,7 @@ function dueDateForMonthKey(monthKey: string, dia: number): string {
   return `${monthKey}-${String(clamped).padStart(2,"0")}`;
 }
 
-function ContasFixasPage({ userId }: { userId: string }) {
+function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: string; transactions: NormTx[]; onOpenCartoes: () => void }) {
   const [all, setAll] = useState<BillToPay[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -1834,10 +1834,15 @@ function ContasFixasPage({ userId }: { userId: string }) {
     }
   }, [showForm]);
 
+  const [cardsSummary, setCardsSummary] = useState<BillToPay[]>([]);
+
   const load = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase.from("bills_to_pay").select("*").order("nome", { ascending: true });
-    if (!error) setAll((data ?? []).filter((b: BillToPay) => !b.dia_fechamento) as BillToPay[]);
+    if (!error) {
+      setAll((data ?? []).filter((b: BillToPay) => !b.dia_fechamento) as BillToPay[]);
+      setCardsSummary((data ?? []).filter((b: BillToPay) => b.recorrente && !!b.dia_fechamento) as BillToPay[]);
+    }
     setLoading(false);
   }, []);
 
@@ -1847,6 +1852,9 @@ function ContasFixasPage({ userId }: { userId: string }) {
   const templates = all.filter(b => b.recorrente);
   const now = new Date();
   const monthKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+
+  const cardsTotalAtual = cardsSummary.reduce((sum, card) =>
+    sum + invoiceTotalFor(card.id, monthKey, transactions, card.dia_fechamento ?? 1).total, 0);
 
   const instanceForTemplateThisMonth = (tplId: string) =>
     all.find(b => b.template_id === tplId && (b.data_vencimento ?? "").startsWith(monthKey));
@@ -1982,6 +1990,16 @@ function ContasFixasPage({ userId }: { userId: string }) {
         <div className="section-title" style={{margin:0}}>Contas Fixas</div>
         <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",valor_base:"",primeira_data:"",categoria:CATEGORIAS_FIXAS[0],parcelas_totais:""});setShowForm(true);}}>+ Nova conta fixa</span>
       </div>
+
+      {cardsSummary.length > 0 && (
+        <div onClick={onOpenCartoes} style={{background:"#F5F5F7",borderRadius:14,padding:"12px 14px",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+          <div>
+            <div style={{fontSize:12,color:"#86868B"}}>💳 Cartões de crédito (fatura atual)</div>
+            <div style={{fontSize:11,color:"#007AFF",marginTop:2}}>Ver detalhamento em Cartões →</div>
+          </div>
+          <span style={{fontSize:16,fontWeight:700,color:"#FF3B30"}}>{formatBRL(cardsTotalAtual)}</span>
+        </div>
+      )}
 
       {overdueBills.length > 0 && (
         <div style={{background:"#FFEBEE",borderRadius:14,padding:"12px 14px",marginBottom:12}}>
@@ -3169,7 +3187,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           <RelatoriosPage key="relatorios" transactions={transactions} bills={bills} loading={loading} />
         )}
         {navPage === "fixas" && (
-          <ContasFixasPage key="fixas" userId={user.id} />
+          <ContasFixasPage key="fixas" userId={user.id} transactions={transactions} onOpenCartoes={()=>handleNav("cartoes")} />
         )}
         {navPage === "cartoes" && (
           <CartoesPage key="cartoes" userId={user.id} transactions={transactions} />
