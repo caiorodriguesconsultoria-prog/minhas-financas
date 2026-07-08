@@ -2134,6 +2134,15 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
     load();
   }
 
+  async function addInstanceToCalendar(instance: BillToPay, nome: string) {
+    try {
+      await syncBillToCalendar(userId, { billId: instance.id, title: nome, date: instance.data_vencimento ?? todayIso, amount: (instance.valor_base??0)+(instance.juros_atraso??0) });
+      setToast({msg:"Adicionado à agenda",type:"success"});
+    } catch (e) {
+      setToast({msg: e instanceof Error ? e.message : "Erro ao adicionar à agenda", type:"error"});
+    }
+  }
+
   async function toggleStatus(instance: BillToPay) {
     const jaPago = (instance.status ?? "pendente").toLowerCase() === "pago";
     if (jaPago) {
@@ -2267,7 +2276,10 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
                             {paid?"Pago":isOverdue(instance)?"Atrasada":"Pendente"}
                           </span>
                         </div>
-                        <span onClick={()=>setHistoryFor(tpl)} style={{fontSize:12,color:"#007AFF",cursor:"pointer"}}>Histórico</span>
+                        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                          <span onClick={()=>addInstanceToCalendar(instance, tpl.nome ?? "Conta fixa")} title="Adicionar à agenda" style={{fontSize:14,cursor:"pointer"}}>📅</span>
+                          <span onClick={()=>setHistoryFor(tpl)} style={{fontSize:12,color:"#007AFF",cursor:"pointer"}}>Histórico</span>
+                        </div>
                       </div>
                     </div>
                   )}
