@@ -2557,10 +2557,16 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
             {historyForTemplate(historyFor.id).length === 0 ? (
               <div style={{fontSize:13,color:"#86868B"}}>Nenhuma cobrança gerada ainda.</div>
             ) : (
-              historyForTemplate(historyFor.id).map(h => (
-                <div key={h.id} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
-                  <span style={{fontSize:13,color:"#1D1D1F"}}>{h.data_vencimento ? new Date(h.data_vencimento+"T00:00:00").toLocaleDateString("pt-BR",{month:"long",year:"numeric"}) : "—"}</span>
-                  <span style={{fontSize:13,fontWeight:600,color:(h.status??"").toLowerCase()==="pago"?"#34C759":"#FF9500"}}>{formatBRL(h.valor_base??0)} · {(h.status??"pendente")}</span>
+              historyForTemplate(historyFor.id).sort((a,b)=>(a.data_vencimento??"").localeCompare(b.data_vencimento??"")).map((h,idx,arr) => (
+                <div key={h.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+                  <span style={{fontSize:13,color:"#1D1D1F"}}>
+                    {h.data_vencimento ? new Date(h.data_vencimento+"T00:00:00").toLocaleDateString("pt-BR",{month:"long",year:"numeric"}) : "—"}
+                    {historyFor.parcelas_totais ? ` · ${idx+1}/${historyFor.parcelas_totais}` : ""}
+                  </span>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:13,fontWeight:600,color:(h.status??"").toLowerCase()==="pago"?"#34C759":"#FF9500"}}>{formatBRL(h.valor_base??0)} · {(h.status??"pendente")}</span>
+                    <span onClick={()=>addInstanceToCalendar(h, historyFor)} title="Adicionar/atualizar na agenda" style={{fontSize:14,cursor:"pointer"}}>📅</span>
+                  </div>
                 </div>
               ))
             )}
