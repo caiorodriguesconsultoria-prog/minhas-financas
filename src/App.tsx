@@ -2068,7 +2068,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
                 </div>
 
                 <div style={{marginTop:10,paddingTop:10,borderTop:"0.5px solid #E5E5E7"}}>
-                  {completed ? (
+                  {completed && (!instance || paid) ? (
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <span style={{fontSize:13,color:"#34C759",fontWeight:600}}>✓ Parcelamento concluído</span>
                       <span onClick={()=>setHistoryFor(tpl)} style={{fontSize:12,color:"#007AFF",cursor:"pointer"}}>Histórico</span>
@@ -2076,22 +2076,27 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
                   ) : !instance ? (
                     <div style={{fontSize:13,color:"#86868B",padding:"6px 0"}}>Aguardando geração automática deste mês…</div>
                   ) : (
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8}}>
-                        <span
-                          onClick={()=>toggleStatus(instance)}
-                          style={{width:20,height:20,borderRadius:6,border:paid?"none":"1.5px solid #C7C7CC",background:paid?"#34C759":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:12,color:"#FFF"}}
-                        >{paid?"✓":""}</span>
-                        <input
-                          type="text" defaultValue={String(instance.valor_base ?? "")}
-                          onBlur={(e)=>{ const v = parseFloat(e.target.value.replace(",",".")); if (!isNaN(v) && v !== instance.valor_base) updateInstanceValue(instance, v); }}
-                          style={{width:90,padding:"6px 8px",border:"1px solid #E5E5E7",borderRadius:8,fontSize:13,fontFamily:"inherit"}}
-                        />
-                        <span style={{fontSize:12,color:paid?"#34C759":isOverdue(instance)?"#FF3B30":"#FF9500",fontWeight:600}}>
-                          {paid?"Pago":isOverdue(instance)?"Atrasada":"Pendente"}
-                        </span>
+                    <div>
+                      {completed && (
+                        <div style={{fontSize:11,color:"#FF9500",fontWeight:600,marginBottom:6}}>Última parcela — marque como paga para concluir</div>
+                      )}
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span
+                            onClick={()=>toggleStatus(instance)}
+                            style={{width:20,height:20,borderRadius:6,border:paid?"none":"1.5px solid #C7C7CC",background:paid?"#34C759":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:12,color:"#FFF"}}
+                          >{paid?"✓":""}</span>
+                          <input
+                            type="text" defaultValue={String(instance.valor_base ?? "")}
+                            onBlur={(e)=>{ const v = parseFloat(e.target.value.replace(",",".")); if (!isNaN(v) && v !== instance.valor_base) updateInstanceValue(instance, v); }}
+                            style={{width:90,padding:"6px 8px",border:"1px solid #E5E5E7",borderRadius:8,fontSize:13,fontFamily:"inherit"}}
+                          />
+                          <span style={{fontSize:12,color:paid?"#34C759":isOverdue(instance)?"#FF3B30":"#FF9500",fontWeight:600}}>
+                            {paid?"Pago":isOverdue(instance)?"Atrasada":"Pendente"}
+                          </span>
+                        </div>
+                        <span onClick={()=>setHistoryFor(tpl)} style={{fontSize:12,color:"#007AFF",cursor:"pointer"}}>Histórico</span>
                       </div>
-                      <span onClick={()=>setHistoryFor(tpl)} style={{fontSize:12,color:"#007AFF",cursor:"pointer"}}>Histórico</span>
                     </div>
                   )}
                 </div>
