@@ -509,8 +509,8 @@ const CHART_DATA_FALLBACK = [
 
 const MONTH_NAMES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 
-function filterByPeriod(txs: NormTx[], period: "mes"|"trim"|"ano"): NormTx[] {
-  const now = new Date();
+function filterByPeriod(txs: NormTx[], period: "mes"|"trim"|"ano", refMonthKey?: string): NormTx[] {
+  const now = refMonthKey ? new Date(refMonthKey + "-01T12:00:00") : new Date();
   return txs.filter(t => {
     if (!t.date) return false;
     const d = new Date(t.date + "T12:00:00");
@@ -546,10 +546,12 @@ function RelatoriosPage({ transactions, bills, loading }: { transactions: NormTx
   const [slice,  setSlice]  = useState<number|null>(null);
   const [ready,  setReady]  = useState(false);
   const [tab,    setTab]    = useState<"despesas"|"receitas"|"fluxo"|"pix">("despesas");
+  const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0,7));
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
 
   useEffect(() => { const t = setTimeout(() => setReady(true), 80); return () => clearTimeout(t); }, []);
 
-  const filtered     = filterByPeriod(transactions, period);
+  const filtered     = filterByPeriod(transactions, period, period==="mes"?selectedMonth:undefined);
   const expenses     = filtered.filter(t=>t.type==="expense");
   const incomes      = filtered.filter(t=>t.type==="income");
   const totalExpense = expenses.reduce((s,t)=>s+t.value,0);
@@ -588,8 +590,9 @@ function RelatoriosPage({ transactions, bills, loading }: { transactions: NormTx
   const maxFlow = Math.max(...monthlyFlow.map(d=>Math.max(d.income,d.expense)), 1);
 
   const now = new Date();
+  const [selYear, selMonthIdx] = selectedMonth.split("-").map(Number);
   const PERIOD_LABELS: Record<string,string> = {
-    mes: `${MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`,
+    mes: `${MONTH_NAMES[selMonthIdx-1]} ${selYear}`,
     trim: `${MONTH_NAMES[Math.max(0,now.getMonth()-2)]}–${MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`,
     ano: String(now.getFullYear()),
   };
@@ -693,11 +696,23 @@ function RelatoriosPage({ transactions, bills, loading }: { transactions: NormTx
       {/* Período */}
       <div className="report-period-ctrl">
         {(["mes","trim","ano"] as const).map((p,i)=>(
-          <button key={p} className={`report-period-btn${period===p?" active":""}`} onClick={()=>{setPeriod(p);setSlice(null);}}>
-            {["Este Mês","Trimestre","Este Ano"][i]}
+          <button key={p} className={`report-period-btn${period===p?" active":""}`}
+            onClick={()=>{
+              if (p==="mes" && period==="mes") { setShowMonthPicker(v=>!v); }
+              else { setPeriod(p); setSlice(null); if (p!=="mes") setShowMonthPicker(false); }
+            }}>
+            {p==="mes" && period==="mes" ? `${MONTH_NAMES[selMonthIdx-1].slice(0,3)} ${selYear} 📅` : ["Este Mês","Trimestre","Este Ano"][i]}
           </button>
         ))}
       </div>
+
+      {showMonthPicker && period==="mes" && (
+        <div style={{marginTop:-14,marginBottom:20}}>
+          <input type="month" value={selectedMonth} max={new Date().toISOString().slice(0,7)}
+            onChange={e=>{setSelectedMonth(e.target.value); setSlice(null); setShowMonthPicker(false);}}
+            style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,fontFamily:"inherit"}} />
+        </div>
+      )}
 
       {/* Cards resumo */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:20}}>
@@ -2406,13 +2421,13 @@ function DespesasMesPage({ bills, accounts }: { bills: BillToPay[]; accounts: No
 
 const TIPOS_INVESTIMENTO = ["Renda Fixa","Tesouro Direto","Fundos","Ações","Cripto","Poupança","Outros"];
 
-function InvestimentosPage({ userId }: { userId: string }) {
+function InvestimentosPage({ userId, accounts }: { userId: string; accounts: NormAccount[] }) {
   const [investimentos, setInvestimentos] = useState<Investimento[]>([]);
   const [lancamentos, setLancamentos] = useState<InvestimentoLancamento[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Investimento | null>(null);
-  const [form, setForm] = useState({ nome:"", tipo:TIPOS_INVESTIMENTO[0], valor_inicial:"", instituicao:"" });
+  const [form, setForm] = useState({ nome:"", tipo:TIPOS_INVESTIMENTO[0], valor_inicial:"", instituicao:"", instituicaoOutro:"" });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const [detailFor, setDetailFor] = useState<Investimento | null>(null);
@@ -2447,7 +2462,7 @@ function InvestimentosPage({ userId }: { userId: string }) {
     const payload = {
       nome: form.nome.trim(), tipo: form.tipo,
       valor_inicial: form.valor_inicial ? parseFloat(form.valor_inicial.replace(",",".")) : 0,
-      instituicao: form.instituicao.trim() || null,
+      instituicao: (form.instituicao === "Outro" ? form.instituicaoOutro.trim() : form.instituicao) || null,
       user_id: userId,
     };
     const { error } = editing
@@ -2501,7 +2516,7 @@ function InvestimentosPage({ userId }: { userId: string }) {
     <div className="scroll-content page-fade">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <div className="section-title" style={{margin:0}}>Investimentos</div>
-        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",tipo:TIPOS_INVESTIMENTO[0],valor_inicial:"",instituicao:""});setShowForm(true);}}>+ Novo</span>
+        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",tipo:TIPOS_INVESTIMENTO[0],valor_inicial:"",instituicao:"",instituicaoOutro:""});setShowForm(true);}}>+ Novo</span>
       </div>
 
       {investimentos.length > 0 && (
@@ -2550,7 +2565,7 @@ function InvestimentosPage({ userId }: { userId: string }) {
                     <div style={{fontSize:12,color:"#86868B",marginTop:2}}>{inv.tipo}{inv.instituicao?` · ${inv.instituicao}`:""} · aplicado {formatBRL(inv.valor_inicial??0)}</div>
                   </div>
                   <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
-                    <span onClick={()=>{setEditing(inv);setForm({nome:inv.nome,tipo:inv.tipo??TIPOS_INVESTIMENTO[0],valor_inicial:String(inv.valor_inicial??""),instituicao:inv.instituicao??""});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
+                    <span onClick={()=>{setEditing(inv);const matches=accounts.some(a=>a.name===inv.instituicao);setForm({nome:inv.nome,tipo:inv.tipo??TIPOS_INVESTIMENTO[0],valor_inicial:String(inv.valor_inicial??""),instituicao:matches?(inv.instituicao??""):(inv.instituicao?"Outro":""),instituicaoOutro:matches?"":(inv.instituicao??"")});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
                     <span onClick={()=>deleteInvestimento(inv)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
                   </div>
                 </div>
@@ -2576,8 +2591,16 @@ function InvestimentosPage({ userId }: { userId: string }) {
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit",background:"#FFF"}}>
               {TIPOS_INVESTIMENTO.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
-            <input placeholder="Instituição (opcional)" value={form.instituicao} onChange={e=>setForm(f=>({...f,instituicao:e.target.value}))}
-              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+            <select value={form.instituicao} onChange={e=>setForm(f=>({...f,instituicao:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit",background:"#FFF"}}>
+              <option value="">Selecione o banco</option>
+              {accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+              <option value="Outro">Outro (fora das contas cadastradas)</option>
+            </select>
+            {form.instituicao === "Outro" && (
+              <input placeholder="Nome do banco/corretora" value={form.instituicaoOutro ?? ""} onChange={e=>setForm(f=>({...f,instituicaoOutro:e.target.value}))}
+                style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+            )}
             <input placeholder="Valor investido inicialmente (R$)" value={form.valor_inicial} onChange={e=>setForm(f=>({...f,valor_inicial:e.target.value}))}
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:16,fontFamily:"inherit"}} />
             <button disabled={saving} onClick={saveInvestimento} style={{width:"100%",padding:14,background:"#007AFF",color:"#FFF",border:"none",borderRadius:14,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:saving?0.6:1}}>
@@ -2967,7 +2990,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           <DespesasMesPage key="despesas-mes" bills={bills} accounts={accounts} />
         )}
         {navPage === "home" && view === "esposa" && (
-          <InvestimentosPage key="investimentos" userId={user.id} />
+          <InvestimentosPage key="investimentos" userId={user.id} accounts={accounts} />
         )}
         {navPage === "relatorios" && (
           <RelatoriosPage key="relatorios" transactions={transactions} bills={bills} loading={loading} />
