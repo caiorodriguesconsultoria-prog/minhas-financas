@@ -2028,8 +2028,22 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
   const historyForTemplate = (tplId: string) =>
     all.filter(b => b.template_id === tplId).sort((a,b)=>(b.data_vencimento??"").localeCompare(a.data_vencimento??""));
 
-  const isPlanCompleted = (tpl: BillToPay) =>
-    !!tpl.parcelas_totais && historyForTemplate(tpl.id).length >= tpl.parcelas_totais;
+  const lastInstallmentMonthKey = (tplId: string): string =>
+    historyForTemplate(tplId).reduce((max, h) => {
+      const mk = (h.data_vencimento ?? "").slice(0,7);
+      return mk > max ? mk : max;
+    }, "");
+
+  const isPlanCompleted = (tpl: BillToPay) => {
+    if (!tpl.parcelas_totais) return false;
+    const lastMonth = lastInstallmentMonthKey(tpl.id);
+    return lastMonth !== "" && monthKey > lastMonth;
+  };
+
+  const isUltimaParcela = (tpl: BillToPay) => {
+    if (!tpl.parcelas_totais) return false;
+    return lastInstallmentMonthKey(tpl.id) === monthKey;
+  };
 
   const todayIso = now.toISOString().slice(0,10);
   const isOverdue = (b: BillToPay) =>
@@ -2385,7 +2399,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
                     <div style={{fontSize:13,color:"#86868B",padding:"6px 0"}}>Aguardando geração automática deste mês…</div>
                   ) : (
                     <div>
-                      {completed && (
+                      {isUltimaParcela(tpl) && (
                         <div style={{fontSize:11,color:"#FF9500",fontWeight:600,marginBottom:6}}>Última parcela — marque como paga para concluir</div>
                       )}
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
