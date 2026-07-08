@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import type { User } from "@supabase/supabase-js";
 import { supabase, normaliseTx, normaliseAccount } from "./supabase";
-import type { Profile, Account, Transaction, BillToPay, Couple, Investimento, InvestimentoLancamento } from "./supabase";
+import type { Profile, Account, Transaction, BillToPay, Couple, Investimento, InvestimentoLancamento, SimulacaoCompra, PlanejamentoMensal } from "./supabase";
 import { LoginPage } from "./LoginPage";
 import { connectGoogleCalendar, disconnectGoogleCalendar, syncBillToCalendar, restoreGoogleCalendarFromServer, hasGoogleCalendarRefreshToken } from "./googleCalendar";
 import { isFaceIdSupported, isFaceIdEnabled, enableFaceId, disableFaceId, unlockWithFaceId, restoreFaceIdFromServer } from "./faceIdLock";
@@ -2987,6 +2987,286 @@ function DespesasMesPage({ bills, accounts }: { bills: BillToPay[]; accounts: No
   );
 }
 
+// ─── Planejamento page ────────────────────────────────────────────────────────
+
+function PlanejamentoPage({ userId, transactions }: { userId: string; transactions: NormTx[] }) {
+  const [bills, setBills] = useState<BillToPay[]>([]);
+  const [simulacoes, setSimulacoes] = useState<SimulacaoCompra[]>([]);
+  const [planos, setPlanos] = useState<PlanejamentoMensal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
+
+  const [showSimForm, setShowSimForm] = useState(false);
+  const [simForm, setSimForm] = useState({ nome:"", valor_total:"", parcelas:"1", primeira_parcela:new Date().toISOString().slice(0,10) });
+  const [savingSim, setSavingSim] = useState(false);
+  const [expandedSim, setExpandedSim] = useState<string|null>(null);
+
+  const [editingRenda, setEditingRenda] = useState(false);
+  const [editingInvest, setEditingInvest] = useState(false);
+  const [rendaInput, setRendaInput] = useState("");
+  const [investInput, setInvestInput] = useState("");
+  const [pendingSave, setPendingSave] = useState<null|"renda"|"invest">(null);
+
+  const now = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [billsRes, simRes, planRes] = await Promise.all([
+      supabase.from("bills_to_pay").select("*").eq("recorrente", true),
+      supabase.from("simulacoes_compra").select("*").order("created_at", { ascending: false }),
+      supabase.from("planejamento_mensal").select("*"),
+    ]);
+    if (!billsRes.error) setBills((billsRes.data ?? []) as BillToPay[]);
+    if (!simRes.error) setSimulacoes((simRes.data ?? []) as SimulacaoCompra[]);
+    if (!planRes.error) setPlanos((planRes.data ?? []) as PlanejamentoMensal[]);
+    setLoading(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useRefetchOnFocus(load);
+  useEffect(() => { if (toast) { const t = setTimeout(()=>setToast(null), toast.type==="error"?6000:3000); return () => clearTimeout(t); } }, [toast]);
+
+  const fixedTemplates = bills.filter(b => !b.dia_fechamento && b.forma_pagamento !== "cartao");
+  const cardTemplates = bills.filter(b => !!b.dia_fechamento);
+  const linkedFixedBills = bills.filter(b => !!b.cartao_vinculado_id);
+
+  // Quanto já está comprometido (contas fixas + faturas de cartão) para um mês qualquer
+  function despesasPrevistasParaMes(targetMonth: string): number {
+    const fixedTotal = fixedTemplates.reduce((s, t) => {
+      const geradas = 0; // aproximação: usamos parcelas restantes a partir de agora
+      const [ty,tm] = targetMonth.split("-").map(Number);
+      const [cy,cm] = monthKey.split("-").map(Number);
+      const mesesAFrente = (ty*12+tm) - (cy*12+cm);
+      if (mesesAFrente < 0) return s;
+      const aindaAtivo = !t.parcelas_totais || mesesAFrente < t.parcelas_totais;
+      return aindaAtivo ? s + (t.valor_base ?? 0) : s;
+    }, 0);
+    const cardsTotal = cardTemplates.reduce((s, c) =>
+      s + invoiceTotalFor(c.id, targetMonth, transactions, c.dia_fechamento ?? 1, linkedFixedBills).total, 0);
+    return fixedTotal + cardsTotal;
+  }
+
+  const despesasPrevistasMesAtual = despesasPrevistasParaMes(monthKey);
+  const planoAtual = planos.find(p => p.mes === monthKey);
+  const renda = planoAtual?.renda_mensal ?? 0;
+  const investimento = planoAtual?.investimento_mensal ?? 0;
+  const saldoLivre = renda - despesasPrevistasMesAtual - investimento;
+
+  async function salvarPlano(campo: "renda_mensal"|"investimento_mensal", valor: number, aplicarFuturos: boolean) {
+    const mesesAlvo = aplicarFuturos
+      ? Array.from({length:12}, (_,i) => addMonthsToKey(monthKey, i))
+      : [monthKey];
+    for (const m of mesesAlvo) {
+      const existente = planos.find(p => p.mes === m);
+      if (existente) {
+        await supabase.from("planejamento_mensal").update({ [campo]: valor }).eq("id", existente.id);
+      } else {
+        await supabase.from("planejamento_mensal").insert({
+          mes: m, user_id: userId,
+          renda_mensal: campo==="renda_mensal" ? valor : 0,
+          investimento_mensal: campo==="investimento_mensal" ? valor : 0,
+        });
+      }
+    }
+    setToast({msg:"Planejamento atualizado",type:"success"});
+    setPendingSave(null);
+    setEditingRenda(false);
+    setEditingInvest(false);
+    load();
+  }
+
+  async function saveSimulacao() {
+    if (!simForm.nome.trim() || !simForm.valor_total) { setToast({msg:"Preencha nome e valor",type:"error"}); return; }
+    setSavingSim(true);
+    const { error } = await supabase.from("simulacoes_compra").insert({
+      nome: simForm.nome.trim(),
+      valor_total: parseFloat(simForm.valor_total.replace(",",".")),
+      parcelas: Math.max(1, parseInt(simForm.parcelas,10) || 1),
+      primeira_parcela: simForm.primeira_parcela,
+      user_id: userId,
+    });
+    setSavingSim(false);
+    if (error) { setToast({msg:`Erro: ${error.message}`,type:"error"}); return; }
+    setToast({msg:"Simulação salva",type:"success"});
+    setShowSimForm(false);
+    setSimForm({ nome:"", valor_total:"", parcelas:"1", primeira_parcela:new Date().toISOString().slice(0,10) });
+    load();
+  }
+
+  async function deleteSimulacao(id: string) {
+    if (!confirm("Remover essa simulação?")) return;
+    await supabase.from("simulacoes_compra").delete().eq("id", id);
+    load();
+  }
+
+  function projecaoSimulacao(sim: SimulacaoCompra) {
+    const parcelaValor = sim.valor_total / sim.parcelas;
+    const [py, pm] = sim.primeira_parcela.slice(0,7).split("-").map(Number);
+    const primeiraKey = `${py}-${String(pm).padStart(2,"0")}`;
+    const meses: { mes: string; comprometidoAntes: number; comEsta: number }[] = [];
+    for (let i = 0; i < sim.parcelas; i++) {
+      const mKey = addMonthsToKey(primeiraKey, i);
+      const antes = despesasPrevistasParaMes(mKey);
+      meses.push({ mes: mKey, comprometidoAntes: antes, comEsta: antes + parcelaValor });
+    }
+    return { parcelaValor, meses };
+  }
+
+  return (
+    <div className="scroll-content page-fade">
+      <div className="section-title" style={{marginBottom:14}}>Planejamento 🎯</div>
+
+      {/* Planejamento mensal */}
+      <div style={{background:"#F5F5F7",borderRadius:16,padding:16,marginBottom:24}}>
+        <div style={{fontSize:15,fontWeight:600,marginBottom:12}}>Planejamento do mês — {MONTH_NAMES[now.getMonth()]} {now.getFullYear()}</div>
+
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+          <span style={{fontSize:13,color:"#86868B"}}>Renda mensal</span>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:14,fontWeight:600}}>{formatBRL(renda)}</span>
+            <span onClick={()=>{setRendaInput(String(renda));setEditingRenda(true);}} style={{cursor:"pointer",fontSize:14}}>✏️</span>
+          </div>
+        </div>
+
+        {editingRenda && (
+          <div style={{padding:"10px 0"}}>
+            <input value={rendaInput} onChange={e=>setRendaInput(e.target.value)} placeholder="Renda mensal (R$)"
+              style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,marginBottom:8,fontFamily:"inherit"}} />
+            <button onClick={()=>setPendingSave("renda")} style={{width:"100%",padding:10,background:"#007AFF",color:"#FFF",border:"none",borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Salvar</button>
+          </div>
+        )}
+
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+          <span style={{fontSize:13,color:"#86868B"}}>Investimento planejado</span>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:14,fontWeight:600,color:"#34C759"}}>{formatBRL(investimento)}</span>
+            <span onClick={()=>{setInvestInput(String(investimento));setEditingInvest(true);}} style={{cursor:"pointer",fontSize:14}}>✏️</span>
+          </div>
+        </div>
+
+        {editingInvest && (
+          <div style={{padding:"10px 0"}}>
+            <input value={investInput} onChange={e=>setInvestInput(e.target.value)} placeholder="Investimento mensal (R$)"
+              style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,marginBottom:8,fontFamily:"inherit"}} />
+            <button onClick={()=>setPendingSave("invest")} style={{width:"100%",padding:10,background:"#007AFF",color:"#FFF",border:"none",borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Salvar</button>
+          </div>
+        )}
+
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+          <span style={{fontSize:13,color:"#86868B"}}>Despesas previstas (fixas + cartões)</span>
+          <span style={{fontSize:14,fontWeight:600,color:"#FF9500"}}>{formatBRL(despesasPrevistasMesAtual)}</span>
+        </div>
+
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0 0"}}>
+          <span style={{fontSize:13,fontWeight:600}}>Saldo livre estimado</span>
+          <span style={{fontSize:17,fontWeight:700,color:saldoLivre>=0?"#34C759":"#FF3B30"}}>{formatBRL(saldoLivre)}</span>
+        </div>
+      </div>
+
+      {/* Simulador de compra parcelada */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div className="section-title" style={{margin:0}}>Simulador de compras</div>
+        <span className="section-link" onClick={()=>setShowSimForm(true)}>+ Nova simulação</span>
+      </div>
+
+      {loading ? (
+        <div style={{textAlign:"center",padding:30,color:"#86868B"}}>Carregando…</div>
+      ) : simulacoes.length === 0 ? (
+        <div style={{textAlign:"center",padding:"30px 20px",color:"#86868B"}}>
+          <div style={{fontSize:36,marginBottom:8}}>🧮</div>
+          <div style={{fontSize:14}}>Simule uma compra parcelada antes de decidir — veja como ela afetaria seus meses futuros.</div>
+        </div>
+      ) : (
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {simulacoes.map(sim => {
+            const { parcelaValor, meses } = projecaoSimulacao(sim);
+            const expanded = expandedSim === sim.id;
+            return (
+              <div key={sim.id} style={{background:"#F5F5F7",borderRadius:16,padding:14}}>
+                <div onClick={()=>setExpandedSim(expanded?null:sim.id)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>{sim.nome}</div>
+                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>{formatBRL(sim.valor_total)} em {sim.parcelas}x de {formatBRL(parcelaValor)}</div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span onClick={(e)=>{e.stopPropagation();deleteSimulacao(sim.id);}} style={{fontSize:16,cursor:"pointer"}}>🗑️</span>
+                    <span style={{fontSize:13,color:"#007AFF"}}>{expanded?"▲":"▼"}</span>
+                  </div>
+                </div>
+                {expanded && (
+                  <div style={{marginTop:12,paddingTop:12,borderTop:"0.5px solid #E5E5E7"}}>
+                    {meses.map((m,i) => (
+                      <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:12}}>
+                        <span style={{color:"#86868B"}}>{monthKeyLabel(m.mes)}</span>
+                        <span style={{color:"#1D1D1F"}}>{formatBRL(m.comprometidoAntes)} <strong>→ {formatBRL(m.comEsta)}</strong></span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Modal: confirmar aplicação futura */}
+      {(pendingSave === "renda" || pendingSave === "invest") && createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setPendingSave(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:420,borderRadius:20,padding:20}}>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:14}}>Aplicar essa alteração a quais meses?</div>
+            <button onClick={()=>salvarPlano(pendingSave==="renda"?"renda_mensal":"investimento_mensal", parseFloat((pendingSave==="renda"?rendaInput:investInput).replace(",","."))||0, false)}
+              style={{width:"100%",padding:12,background:"#F5F5F7",color:"#1D1D1F",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginBottom:8}}>
+              Só este mês
+            </button>
+            <button onClick={()=>salvarPlano(pendingSave==="renda"?"renda_mensal":"investimento_mensal", parseFloat((pendingSave==="renda"?rendaInput:investInput).replace(",","."))||0, true)}
+              style={{width:"100%",padding:12,background:"#007AFF",color:"#FFF",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              Este mês e os próximos 12
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Modal: nova simulação */}
+      {showSimForm && createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowSimForm(false)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
+            <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>Nova simulação de compra</div>
+            <input placeholder="O que você quer comprar?" value={simForm.nome} onChange={e=>setSimForm(f=>({...f,nome:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+            <input placeholder="Valor total (R$)" value={simForm.valor_total} onChange={e=>setSimForm(f=>({...f,valor_total:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+            <div style={{display:"flex",gap:10,marginBottom:10}}>
+              <div style={{flex:1}}>
+                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Parcelas</label>
+                <input type="number" min={1} max={48} value={simForm.parcelas} onChange={e=>setSimForm(f=>({...f,parcelas:e.target.value}))}
+                  style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit"}} />
+              </div>
+              <div style={{flex:1}}>
+                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>1ª parcela em</label>
+                <input type="date" value={simForm.primeira_parcela} onChange={e=>setSimForm(f=>({...f,primeira_parcela:e.target.value}))}
+                  style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit"}} />
+              </div>
+            </div>
+            <button disabled={savingSim} onClick={saveSimulacao} style={{width:"100%",padding:14,background:"#007AFF",color:"#FFF",border:"none",borderRadius:14,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:savingSim?0.6:1}}>
+              {savingSim?"Salvando…":"Salvar simulação"}
+            </button>
+            <button onClick={()=>setShowSimForm(false)} style={{width:"100%",padding:12,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Cancelar</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {toast && createPortal(
+        <div style={{position:"fixed",bottom:90,left:16,right:16,maxWidth:568,margin:"0 auto",background:toast.type==="error"?"#FF3B30":"#1D1D1F",color:"#FFF",padding:"12px 16px",borderRadius:12,fontSize:13,textAlign:"center",zIndex:300}}>
+          {toast.msg}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
 // ─── Investimentos page ───────────────────────────────────────────────────────
 
 const TIPOS_INVESTIMENTO = ["Renda Fixa","Tesouro Direto","Fundos","Ações","Cripto","Poupança","Outros"];
@@ -3507,7 +3787,7 @@ function AjustesPage({ user, onSignOut, coupleLink }: { user: User; onSignOut: (
 
 // ─── Root component ───────────────────────────────────────────────────────────
 
-type NavPage = "home"|"relatorios"|"fixas"|"cartoes"|"ajustes";
+type NavPage = "home"|"relatorios"|"fixas"|"cartoes"|"planejamento"|"ajustes";
 
 export default function App() {
   // ── Auth state ──────────────────────────────────────────────────────────────
@@ -3672,6 +3952,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
     { icon:"📊", label:"Relatórios", page:"relatorios" },
     { icon:"📌", label:"Fixas",      page:"fixas" },
     { icon:"🗂️", label:"Cartões",   page:"cartoes" },
+    { icon:"🎯", label:"Planejar",  page:"planejamento" },
     { icon:"⚙️", label:"Ajustes",   page:"ajustes" },
   ];
 
@@ -3772,6 +4053,9 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
         )}
         {navPage === "cartoes" && (
           <CartoesPage key="cartoes" userId={user.id} transactions={transactions} />
+        )}
+        {navPage === "planejamento" && (
+          <PlanejamentoPage key="planejamento" userId={user.id} transactions={transactions} />
         )}
         {navPage === "ajustes" && (
           <AjustesPage user={user} onSignOut={onSignOut} coupleLink={coupleLink} />

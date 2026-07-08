@@ -40,6 +40,14 @@ export interface InvestimentoLancamento {
   id: string; investimento_id: string; mes: string;
   valor_ganho: number; saldo_acumulado?: number | null; observacao?: string | null; created_at?: string;
 }
+export interface SimulacaoCompra {
+  id: string; user_id?: string; nome: string; valor_total: number;
+  parcelas: number; primeira_parcela: string; categoria?: string | null; created_at?: string;
+}
+export interface PlanejamentoMensal {
+  id: string; user_id?: string; mes: string;
+  renda_mensal: number; investimento_mensal: number; created_at?: string;
+}
 export function normaliseTx(t: Transaction) {
   const isIncome = t.tipo === "receita" || t.tipo === "income" || t.tipo === "entrada";
   return {
