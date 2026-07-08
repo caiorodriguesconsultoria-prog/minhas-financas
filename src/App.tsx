@@ -1985,6 +1985,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const [payingBill, setPayingBill] = useState<BillToPay | null>(null);
+  const [calendarLink, setCalendarLink] = useState<string | null>(null);
   const [payForm, setPayForm] = useState({ data_pagamento:"", motivo_atraso:"", juros:"" });
   const [anexoFile, setAnexoFile] = useState<File | null>(null);
   const [uploadingAnexo, setUploadingAnexo] = useState(false);
@@ -2208,8 +2209,11 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
         if (posicao >= 0) titulo = `${titulo} (Parcela ${posicao+1}/${tpl.parcelas_totais})`;
       }
       const result = await syncBillToCalendar(userId, { billId: instance.id, title: titulo, date: instance.data_vencimento ?? todayIso, amount: (instance.valor_base??0)+(instance.juros_atraso??0) });
-      setToast({msg:"Adicionado à agenda — abrindo o evento…",type:"success"});
-      if (result.htmlLink) window.open(result.htmlLink, "_blank");
+      if (result.htmlLink) {
+        setCalendarLink(result.htmlLink);
+      } else {
+        setToast({msg:"Sincronizado, mas o Google não retornou um link do evento",type:"error"});
+      }
     } catch (e) {
       setToast({msg: e instanceof Error ? e.message : "Erro ao adicionar à agenda", type:"error"});
     }
@@ -2491,6 +2495,23 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
               {uploadingAnexo?"Enviando anexo…":saving?"Salvando…":"Salvar"}
             </button>
             <button onClick={()=>setShowForm(false)} style={{width:"100%",padding:12,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Cancelar</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Calendar link confirmation */}
+      {calendarLink && createPortal(
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setCalendarLink(null)}>
+          <div className="modal-sheet" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:420,borderRadius:20,padding:24,textAlign:"center"}}>
+            <div style={{fontSize:32,marginBottom:10}}>📅</div>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:6}}>Evento sincronizado!</div>
+            <div style={{fontSize:13,color:"#86868B",marginBottom:20}}>Toque no link abaixo para conferir na sua Google Agenda.</div>
+            <a href={calendarLink} target="_blank" rel="noopener noreferrer"
+              style={{display:"block",padding:14,background:"#007AFF",color:"#FFF",borderRadius:14,fontSize:14,fontWeight:700,textDecoration:"none",marginBottom:10}}>
+              Abrir evento na Google Agenda
+            </a>
+            <button onClick={()=>setCalendarLink(null)} style={{width:"100%",padding:12,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Fechar</button>
           </div>
         </div>,
         document.body
