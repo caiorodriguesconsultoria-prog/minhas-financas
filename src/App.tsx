@@ -853,7 +853,7 @@ function RelatoriosPage({ transactions, bills, loading }: { transactions: NormTx
 // ─── Home page ────────────────────────────────────────────────────────────────
 
 function HomePage({
-  accounts, transactions, bills, loading, error, refetch, onEditTx
+  accounts, transactions, bills, loading, error, refetch, onEditTx, onOpenInvestimentos
 }: {
   accounts: NormAccount[];
   transactions: NormTx[];
@@ -862,13 +862,26 @@ function HomePage({
   error: string | null;
   refetch: () => void;
   onEditTx: (tx: NormTx) => void;
+  onOpenInvestimentos: () => void;
 }) {
   const [barsReady,   setBarsReady]   = useState(false);
   const [selectedBar, setSelectedBar] = useState<number|null>(null);
   const [txFilter,    setTxFilter]    = useState<"todos"|"receita"|"despesa">("todos");
   const [showFilter,  setShowFilter]  = useState(false);
   const [showAllAccounts, setShowAllAccounts] = useState(false);
+  const [totalInvestido, setTotalInvestido] = useState<number | null>(null);
   useEffect(() => { const t = setTimeout(() => setBarsReady(true), 60); return () => clearTimeout(t); }, []);
+  useEffect(() => {
+    (async () => {
+      const [invRes, lancRes] = await Promise.all([
+        supabase.from("investimentos").select("valor_inicial"),
+        supabase.from("investimento_lancamentos").select("valor_ganho"),
+      ]);
+      const base = (invRes.data ?? []).reduce((s: number, i: { valor_inicial?: number }) => s + (i.valor_inicial ?? 0), 0);
+      const ganhos = (lancRes.data ?? []).reduce((s: number, l: { valor_ganho?: number }) => s + (l.valor_ganho ?? 0), 0);
+      setTotalInvestido(base + ganhos);
+    })();
+  }, []);
 
   const homeMonthlyFlow = buildMonthlyFlow(transactions);
   const homeMaxChart    = Math.max(...homeMonthlyFlow.map(d=>Math.max(d.income,d.expense)),1);
@@ -922,6 +935,12 @@ function HomePage({
               <div className="card-label">{acc.type === "savings" ? "Poupança" : "Conta corrente"}</div>
             </div>
           ))}
+          <div onClick={onOpenInvestimentos} className="account-card card-enter" style={{width:"100%",animationDelay:`${(accounts.length+1)*0.06}s`,background:"linear-gradient(135deg,#1D1D1F,#3A3A3C)"}}>
+            <div className="card-icon">📈</div>
+            <div className="card-bank-name" style={{color:"#FFF"}}>Investimentos</div>
+            <div className="card-balance" style={{color:"#FFF"}}>{totalInvestido===null?"…":formatBRL(totalInvestido)}</div>
+            <div className="card-label" style={{color:"rgba(255,255,255,0.7)"}}>Ver detalhes</div>
+          </div>
         </div>
       ) : (
         <div className="cards-scroll">
@@ -939,6 +958,12 @@ function HomePage({
               <div className="card-label">{acc.type === "savings" ? "Poupança" : "Conta corrente"}</div>
             </div>
           ))}
+          <div onClick={onOpenInvestimentos} className="account-card card-enter" style={{animationDelay:`${(accounts.length+1)*0.06}s`,background:"linear-gradient(135deg,#1D1D1F,#3A3A3C)"}}>
+            <div className="card-icon">📈</div>
+            <div className="card-bank-name" style={{color:"#FFF"}}>Investimentos</div>
+            <div className="card-balance" style={{color:"#FFF"}}>{totalInvestido===null?"…":formatBRL(totalInvestido)}</div>
+            <div className="card-label" style={{color:"rgba(255,255,255,0.7)"}}>Ver detalhes</div>
+          </div>
         </div>
       )}
 
@@ -2391,8 +2416,9 @@ function InvestimentosPage({ userId }: { userId: string }) {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const [detailFor, setDetailFor] = useState<Investimento | null>(null);
-  const [lancForm, setLancForm] = useState({ mes:new Date().toISOString().slice(0,7), valor_ganho:"", observacao:"" });
+  const [lancForm, setLancForm] = useState({ mes:new Date().toISOString().slice(0,7), valor_ganho:"", saldo_acumulado:"", observacao:"" });
   const [savingLanc, setSavingLanc] = useState(false);
+  const [bankFilter, setBankFilter] = useState<string>("Todos");
   const formSheetRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { if (showForm && formSheetRef.current) formSheetRef.current.scrollTop = 0; }, [showForm]);
@@ -2443,12 +2469,17 @@ function InvestimentosPage({ userId }: { userId: string }) {
   }
 
   async function saveLancamento() {
-    if (!detailFor || !lancForm.valor_ganho) { setToast({msg:"Preencha o valor ganho",type:"error"}); return; }
+    if (!detailFor || !lancForm.saldo_acumulado) { setToast({msg:"Preencha o saldo acumulado",type:"error"}); return; }
     setSavingLanc(true);
+    const saldoAtual = parseFloat(lancForm.saldo_acumulado.replace(",","."));
+    const anteriores = lancamentosFor(detailFor.id).filter(l => l.mes < lancForm.mes).sort((a,b)=>b.mes.localeCompare(a.mes));
+    const saldoAnterior = anteriores[0]?.saldo_acumulado ?? detailFor.valor_inicial ?? 0;
+    const valorGanho = saldoAtual - saldoAnterior;
     const existing = lancamentosFor(detailFor.id).find(l => l.mes === lancForm.mes);
     const payload = {
       investimento_id: detailFor.id, mes: lancForm.mes,
-      valor_ganho: parseFloat(lancForm.valor_ganho.replace(",",".")),
+      valor_ganho: valorGanho,
+      saldo_acumulado: saldoAtual,
       observacao: lancForm.observacao.trim() || null,
     };
     const { error } = existing
@@ -2456,8 +2487,8 @@ function InvestimentosPage({ userId }: { userId: string }) {
       : await supabase.from("investimento_lancamentos").insert(payload);
     setSavingLanc(false);
     if (error) { setToast({msg:`Erro: ${error.message}`,type:"error"}); return; }
-    setToast({msg:"Rendimento registrado",type:"success"});
-    setLancForm({ mes:new Date().toISOString().slice(0,7), valor_ganho:"", observacao:"" });
+    setToast({msg:"Saldo acumulado registrado",type:"success"});
+    setLancForm({ mes:new Date().toISOString().slice(0,7), valor_ganho:"", saldo_acumulado:"", observacao:"" });
     load();
   }
 
@@ -2494,8 +2525,21 @@ function InvestimentosPage({ userId }: { userId: string }) {
           <div style={{fontSize:14}}>Nenhum investimento cadastrado ainda.<br/>Cadastre e registre os rendimentos mês a mês.</div>
         </div>
       ) : (
-        <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          {investimentos.map(inv => {
+        <>
+          {(() => {
+            const bancos = ["Todos", ...Array.from(new Set(investimentos.map(i => i.instituicao || "Sem banco")))];
+            return bancos.length > 2 && (
+              <div className="pay-seg" style={{marginBottom:14}}>
+                {bancos.map(b => (
+                  <button key={b} className={`pay-seg-btn${bankFilter===b?" active":""}`}
+                    style={bankFilter===b?{background:"#007AFF"}:{}}
+                    onClick={()=>setBankFilter(b)}>{b}</button>
+                ))}
+              </div>
+            );
+          })()}
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {investimentos.filter(inv => bankFilter==="Todos" || (inv.instituicao||"Sem banco")===bankFilter).map(inv => {
             const ganho = totalGanhoFor(inv.id);
             const rentabilidade = inv.valor_inicial ? (ganho / inv.valor_inicial) * 100 : 0;
             return (
@@ -2516,8 +2560,9 @@ function InvestimentosPage({ userId }: { userId: string }) {
                 </div>
               </div>
             );
-          })}
-        </div>
+            })}
+          </div>
+        </>
       )}
 
       {/* Form: novo/editar investimento */}
@@ -2552,15 +2597,26 @@ function InvestimentosPage({ userId }: { userId: string }) {
             <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>Rendimento acumulado: <strong style={{color:"#34C759"}}>{formatBRL(totalGanhoFor(detailFor.id))}</strong></div>
 
             <div style={{background:"#F5F5F7",borderRadius:14,padding:14,marginBottom:16}}>
-              <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>Registrar rendimento do mês</div>
+              <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>Lançar saldo acumulado do mês</div>
               <input type="month" value={lancForm.mes} onChange={e=>setLancForm(f=>({...f,mes:e.target.value}))}
                 style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,marginBottom:8,fontFamily:"inherit"}} />
-              <input placeholder="Valor ganho no mês (R$)" value={lancForm.valor_ganho} onChange={e=>setLancForm(f=>({...f,valor_ganho:e.target.value}))}
+              <input placeholder="Saldo acumulado atual (R$)" value={lancForm.saldo_acumulado} onChange={e=>setLancForm(f=>({...f,saldo_acumulado:e.target.value}))}
                 style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,marginBottom:8,fontFamily:"inherit"}} />
+              {lancForm.saldo_acumulado && (() => {
+                const saldoAtual = parseFloat(lancForm.saldo_acumulado.replace(",","."));
+                const anteriores = lancamentosFor(detailFor.id).filter(l => l.mes < lancForm.mes).sort((a,b)=>b.mes.localeCompare(a.mes));
+                const saldoAnterior = anteriores[0]?.saldo_acumulado ?? detailFor.valor_inicial ?? 0;
+                const ganhoPreview = saldoAtual - saldoAnterior;
+                return !isNaN(saldoAtual) && (
+                  <div style={{fontSize:12,color:ganhoPreview>=0?"#34C759":"#FF3B30",marginBottom:8}}>
+                    Rendimento do mês: {formatBRL(ganhoPreview)} (em relação a {formatBRL(saldoAnterior)})
+                  </div>
+                );
+              })()}
               <input placeholder="Observação (opcional)" value={lancForm.observacao} onChange={e=>setLancForm(f=>({...f,observacao:e.target.value}))}
                 style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,marginBottom:10,fontFamily:"inherit"}} />
               <button disabled={savingLanc} onClick={saveLancamento} style={{width:"100%",padding:11,background:"#34C759",color:"#FFF",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit",opacity:savingLanc?0.6:1}}>
-                {savingLanc?"Salvando…":"Salvar rendimento"}
+                {savingLanc?"Salvando…":"Salvar saldo"}
               </button>
             </div>
 
@@ -2572,7 +2628,7 @@ function InvestimentosPage({ userId }: { userId: string }) {
                 <div key={l.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
                   <div>
                     <div style={{fontSize:13,color:"#1D1D1F"}}>{monthKeyLabel(l.mes)}</div>
-                    {l.observacao && <div style={{fontSize:11,color:"#86868B",marginTop:2}}>{l.observacao}</div>}
+                    <div style={{fontSize:11,color:"#86868B",marginTop:2}}>Saldo: {formatBRL(l.saldo_acumulado ?? 0)}{l.observacao?` · ${l.observacao}`:""}</div>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:10}}>
                     <span style={{fontSize:14,fontWeight:600,color:l.valor_ganho>=0?"#34C759":"#FF3B30"}}>{formatBRL(l.valor_ganho)}</span>
@@ -2904,6 +2960,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
             error={error}
             refetch={refetch}
             onEditTx={setEditTx}
+            onOpenInvestimentos={()=>setView("esposa")}
           />
         )}
         {navPage === "home" && view === "eu" && (

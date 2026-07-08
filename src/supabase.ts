@@ -35,7 +35,7 @@ export interface Investimento {
 }
 export interface InvestimentoLancamento {
   id: string; investimento_id: string; mes: string;
-  valor_ganho: number; observacao?: string | null; created_at?: string;
+  valor_ganho: number; saldo_acumulado?: number | null; observacao?: string | null; created_at?: string;
 }
 export function normaliseTx(t: Transaction) {
   const isIncome = t.tipo === "receita" || t.tipo === "income" || t.tipo === "entrada";
