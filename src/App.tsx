@@ -4,8 +4,8 @@ import type { User } from "@supabase/supabase-js";
 import { supabase, normaliseTx, normaliseAccount } from "./supabase";
 import type { Profile, Account, Transaction, BillToPay, Couple, Investimento, InvestimentoLancamento } from "./supabase";
 import { LoginPage } from "./LoginPage";
-import { isGoogleCalendarConnected, connectGoogleCalendar, disconnectGoogleCalendar, syncBillToCalendar } from "./googleCalendar";
-import { isFaceIdSupported, isFaceIdEnabled, enableFaceId, disableFaceId, unlockWithFaceId } from "./faceIdLock";
+import { isGoogleCalendarConnected, connectGoogleCalendar, disconnectGoogleCalendar, syncBillToCalendar, restoreGoogleCalendarFromServer } from "./googleCalendar";
+import { isFaceIdSupported, isFaceIdEnabled, enableFaceId, disableFaceId, unlockWithFaceId, restoreFaceIdFromServer } from "./faceIdLock";
 
 // Atualiza os dados automaticamente sempre que o app volta a ficar visível
 // (ex: trocou de app e voltou, destravou o celular, reabriu depois de um tempo).
@@ -3189,7 +3189,7 @@ function AjustesPage({ user, onSignOut, coupleLink }: { user: User; onSignOut: (
   async function handleConnectGoogle() {
     setGcalLoading(true); setGcalMsg(null);
     try {
-      await connectGoogleCalendar();
+      await connectGoogleCalendar(user.id);
       setGcalConnected(true);
       setGcalMsg("Conectado! Os vencimentos serão adicionados à sua agenda automaticamente.");
     } catch (e) {
@@ -3198,8 +3198,8 @@ function AjustesPage({ user, onSignOut, coupleLink }: { user: User; onSignOut: (
     setGcalLoading(false);
   }
 
-  function handleDisconnectGoogle() {
-    disconnectGoogleCalendar();
+  async function handleDisconnectGoogle() {
+    await disconnectGoogleCalendar(user.id);
     setGcalConnected(false);
     setGcalMsg(null);
   }
@@ -3212,7 +3212,7 @@ function AjustesPage({ user, onSignOut, coupleLink }: { user: User; onSignOut: (
   async function handleEnableFaceId() {
     setFaceIdLoading(true); setFaceIdMsg(null);
     try {
-      await enableFaceId(email);
+      await enableFaceId(user.id, email);
       setFaceIdOn(true);
       setFaceIdMsg("Ativado! Da próxima vez que abrir o app, ele vai pedir a biometria.");
     } catch (e) {
@@ -3221,8 +3221,8 @@ function AjustesPage({ user, onSignOut, coupleLink }: { user: User; onSignOut: (
     setFaceIdLoading(false);
   }
 
-  function handleDisableFaceId() {
-    disableFaceId();
+  async function handleDisableFaceId() {
+    await disableFaceId(user.id);
     setFaceIdOn(false);
     setFaceIdMsg(null);
   }
@@ -3420,15 +3420,27 @@ export default function App() {
   const [unlockErr,   setUnlockErr]   = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null);
       setAuthLoading(false);
-      if (session?.user && isFaceIdEnabled()) setLocked(true);
+      if (session?.user) {
+        await Promise.all([
+          restoreFaceIdFromServer(session.user.id),
+          restoreGoogleCalendarFromServer(session.user.id),
+        ]);
+        if (isFaceIdEnabled()) setLocked(true);
+      }
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setUser(session?.user ?? null);
       setAuthLoading(false);
-      if (session?.user && isFaceIdEnabled()) setLocked(true);
+      if (session?.user) {
+        await Promise.all([
+          restoreFaceIdFromServer(session.user.id),
+          restoreGoogleCalendarFromServer(session.user.id),
+        ]);
+        if (isFaceIdEnabled()) setLocked(true);
+      }
     });
     return () => subscription.unsubscribe();
   }, []);
