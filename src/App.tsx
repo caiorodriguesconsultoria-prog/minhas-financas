@@ -1835,9 +1835,24 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
       if (error) { setToast({msg:`Erro ao salvar: ${error.message}`,type:"error"}); console.error(error); }
       else setToast({msg:"Conta fixa atualizada",type:"success"});
     } else {
-      const { error } = await supabase.from("bills_to_pay").insert(payload);
+      const { data: created, error } = await supabase.from("bills_to_pay").insert(payload).select().single();
       if (error) { setToast({msg:`Erro ao criar: ${error.message}`,type:"error"}); console.error(error); }
-      else setToast({msg:"Conta fixa criada",type:"success"});
+      else {
+        if (!isCardForm && created && form.primeira_data) {
+          const { error: instErr } = await supabase.from("bills_to_pay").insert({
+            nome: form.nome.trim(),
+            valor_base: form.valor_base ? parseFloat(form.valor_base.replace(",",".")) : 0,
+            categoria: form.categoria,
+            data_vencimento: form.primeira_data,
+            status: "pendente",
+            recorrente: false,
+            template_id: created.id,
+            user_id: userId,
+          });
+          if (instErr) console.error(instErr);
+        }
+        setToast({msg:"Conta fixa criada",type:"success"});
+      }
     }
     setSaving(false);
     setShowForm(false);
@@ -1938,7 +1953,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
     load();
   }
 
-  const pendingCount = templates.filter(t => !t.dia_fechamento && !isPlanCompleted(t) && !instanceForTemplateThisMonth(t.id)).length;
+
 
   return (
     <div className="scroll-content page-fade">
@@ -1958,13 +1973,6 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
               <span>vencia em {b.data_vencimento ? new Date(b.data_vencimento+"T00:00:00").toLocaleDateString("pt-BR") : "—"}</span>
             </div>
           ))}
-        </div>
-      )}
-
-      {templates.length > 0 && pendingCount > 0 && (
-        <div style={{background:"#FFF3E0",borderRadius:14,padding:"12px 14px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontSize:13,color:"#8A5A00"}}>{pendingCount} conta{pendingCount!==1?"s":""} ainda não gerada{pendingCount!==1?"s":""} este mês</span>
-          <button onClick={generateAllPending} style={{background:"#FF9500",color:"#FFF",border:"none",borderRadius:10,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Gerar todas</button>
         </div>
       )}
 
@@ -2066,9 +2074,7 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
                       <span onClick={()=>setHistoryFor(tpl)} style={{fontSize:12,color:"#007AFF",cursor:"pointer"}}>Histórico</span>
                     </div>
                   ) : !instance ? (
-                    <button onClick={()=>generateThisMonth(tpl)} style={{width:"100%",padding:"9px",background:"#007AFF",color:"#FFF",border:"none",borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-                      Gerar cobrança deste mês
-                    </button>
+                    <div style={{fontSize:13,color:"#86868B",padding:"6px 0"}}>Aguardando geração automática deste mês…</div>
                   ) : (
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <div style={{display:"flex",alignItems:"center",gap:8}}>
