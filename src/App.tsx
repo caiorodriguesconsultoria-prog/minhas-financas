@@ -1125,7 +1125,7 @@ function HomePage({
                   <div key={tx.id} className="tx-item tx-enter" style={{animationDelay:`${i*0.04}s`}} onClick={()=>onEditTx(tx)}>
                     <div className="tx-icon" style={{background:bg}}>{icon}</div>
                     <div className="tx-info">
-                      <div className="tx-name">{tx.name}</div>
+                      <div className="tx-name">{tx.name}{tx.anexo_url && <span title="Tem comprovante anexado" style={{marginLeft:6,fontSize:12}}>📎</span>}</div>
                       <div className="tx-category" style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
                         <span className={`badge ${tx.type==="income"?"badge-income":"badge-expense"}`}>{tx.category}</span>
                         {tx.meio_pagamento && (()=>{const pm=getPaymentStyle(tx.meio_pagamento);return pm.label?<span className={`badge ${pm.badgeClass}`}>{pm.label}</span>:null;})()}
@@ -1216,6 +1216,8 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
   const [showSimilar, setShowSimilar] = useState(false);
   const [cartaoId,    setCartaoId]    = useState("");
   const [parcelas,    setParcelas]    = useState("1");
+  const [anexoFile,   setAnexoFile]   = useState<File | null>(null);
+  const [uploadingAnexo, setUploadingAnexo] = useState(false);
 
   const cards = bills.filter(b => b.recorrente && (b.categoria ?? "").toLowerCase() === "cartão de crédito");
 
@@ -1287,6 +1289,22 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
     const pessoas    = parseInt(numPessoas) || 1;
     const minhaParte = form.tipo === "despesa" && pessoas > 1 ? valorTotal / pessoas : null;
 
+    let anexoUrl: string | null = null;
+    let anexoNome: string | null = null;
+    if (anexoFile) {
+      setUploadingAnexo(true);
+      const path = `${userId}/${Date.now()}-${anexoFile.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      const { error: upErr } = await supabase.storage.from("anexos").upload(path, anexoFile);
+      setUploadingAnexo(false);
+      if (upErr) {
+        setSaving(false);
+        setErr(`Erro ao enviar anexo: ${upErr.message}`);
+        return;
+      }
+      anexoUrl = supabase.storage.from("anexos").getPublicUrl(path).data.publicUrl;
+      anexoNome = anexoFile.name;
+    }
+
     const isCredito = form.meio_pagamento === "Crédito";
     const payload: Record<string,unknown> = {
       user_id:        userId,
@@ -1302,6 +1320,7 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
       ...(paraQuem ? { beneficiario_real: paraQuem } : {}),
       ...(minhaParte !== null ? { observacao: `Dividido entre ${pessoas} pessoas. Sua parte: R$${minhaParte.toFixed(2)}` } : {}),
       ...(isCredito && cartaoId ? { cartao_id: cartaoId, parcela_total: Math.max(1, parseInt(parcelas,10) || 1) } : {}),
+      ...(anexoUrl ? { anexo_url: anexoUrl, anexo_nome: anexoNome } : {}),
     };
 
     const { error } = await supabase.from("transactions").insert(payload);
@@ -1524,8 +1543,14 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
             )}
           </div>
         )}
-        <button className="btn-primary" onClick={handleSave} disabled={saving}>
-          {saving ? "Salvando…" : "Salvar Transação"}
+        <div className="form-field">
+          <label className="form-label">Anexar comprovante (opcional)</label>
+          <input type="file" accept="image/*,application/pdf" onChange={e=>setAnexoFile(e.target.files?.[0] ?? null)}
+            style={{width:"100%",padding:"10px",border:"1.5px dashed #C7C7CC",borderRadius:12,fontSize:13,fontFamily:"inherit",background:"#FAFAFA"}} />
+          {anexoFile && <div style={{fontSize:12,color:"#34C759",marginTop:6}}>📎 {anexoFile.name}</div>}
+        </div>
+        <button className="btn-primary" onClick={handleSave} disabled={saving || uploadingAnexo}>
+          {uploadingAnexo ? "Enviando anexo…" : saving ? "Salvando…" : "Salvar Transação"}
         </button>
       </div>
     </div>
@@ -1554,12 +1579,29 @@ function EditTransacaoModal({ tx, onClose, onSaved, onDeleted, accounts }: {
   const [deleting,   setDeleting]   = useState(false);
   const [err,        setErr]        = useState<string|null>(null);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [anexoFile,  setAnexoFile]  = useState<File | null>(null);
+  const [uploadingAnexo, setUploadingAnexo] = useState(false);
+  const [removeAnexo, setRemoveAnexo] = useState(false);
 
   async function handleSave() {
     if (!descricao.trim() || !valor || !data) {
       setErr("Preencha todos os campos obrigatórios."); return;
     }
     setSaving(true); setErr(null);
+
+    let anexoUpdate: Record<string, unknown> = {};
+    if (anexoFile) {
+      setUploadingAnexo(true);
+      const path = `${tx.user_id ?? "sem-usuario"}/${Date.now()}-${anexoFile.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      const { error: upErr } = await supabase.storage.from("anexos").upload(path, anexoFile);
+      setUploadingAnexo(false);
+      if (upErr) { setSaving(false); setErr(`Erro ao enviar anexo: ${upErr.message}`); return; }
+      const url = supabase.storage.from("anexos").getPublicUrl(path).data.publicUrl;
+      anexoUpdate = { anexo_url: url, anexo_nome: anexoFile.name };
+    } else if (removeAnexo) {
+      anexoUpdate = { anexo_url: null, anexo_nome: null };
+    }
+
     const { error } = await supabase.from("transactions").update({
       descricao:      descricao.trim(),
       valor:          parseFloat(valor),
@@ -1568,6 +1610,7 @@ function EditTransacaoModal({ tx, onClose, onSaved, onDeleted, accounts }: {
       tipo,
       account_id:     accountId || null,
       meio_pagamento: PAYMENT_METHODS.find(p=>p.label===meioPag)?.dbValue ?? "pix",
+      ...anexoUpdate,
     }).eq("id", tx.id);
     setSaving(false);
     if (error) { setErr(`Erro ao salvar: ${error.message}`); return; }
@@ -1662,9 +1705,24 @@ function EditTransacaoModal({ tx, onClose, onSaved, onDeleted, accounts }: {
           </div>
         </div>
 
+        <div className="form-field">
+          <label className="form-label">Comprovante anexado</label>
+          {tx.anexo_url && !removeAnexo && !anexoFile ? (
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",background:"#F5F5F7",borderRadius:12}}>
+              <a href={tx.anexo_url} target="_blank" rel="noopener noreferrer" style={{fontSize:13,color:"#007AFF",textDecoration:"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📎 {tx.anexo_nome ?? "Ver anexo"}</a>
+              <span onClick={()=>setRemoveAnexo(true)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
+            </div>
+          ) : (
+            <input type="file" accept="image/*,application/pdf" onChange={e=>{setAnexoFile(e.target.files?.[0] ?? null); setRemoveAnexo(false);}}
+              style={{width:"100%",padding:"10px",border:"1.5px dashed #C7C7CC",borderRadius:12,fontSize:13,fontFamily:"inherit",background:"#FAFAFA"}} />
+          )}
+          {anexoFile && <div style={{fontSize:12,color:"#34C759",marginTop:6}}>📎 {anexoFile.name} (substituirá o anterior)</div>}
+          {removeAnexo && !anexoFile && <div style={{fontSize:12,color:"#FF3B30",marginTop:6}}>Anexo será removido ao salvar.</div>}
+        </div>
+
         {/* Salvar */}
-        <button className="btn-primary" onClick={handleSave} disabled={saving||deleting}>
-          {saving ? "Salvando…" : "💾 Salvar Alterações"}
+        <button className="btn-primary" onClick={handleSave} disabled={saving||deleting||uploadingAnexo}>
+          {uploadingAnexo ? "Enviando anexo…" : saving ? "Salvando…" : "💾 Salvar Alterações"}
         </button>
 
         {/* Excluir */}

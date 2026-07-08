@@ -11,6 +11,7 @@ export interface Transaction {
   tipo?: string; categoria?: string; beneficiario_real?: string;
   meio_pagamento?: string; tipo_escopo?: string; created_at?: string;
   cartao_id?: string | null; parcela_total?: number;
+  anexo_url?: string | null; anexo_nome?: string | null;
 }
 export interface Account {
   id: string; user_id?: string; nome?: string; tipo?: string;
@@ -49,6 +50,8 @@ export function normaliseTx(t: Transaction) {
     tipo_escopo: t.tipo_escopo ?? null,
     cartao_id: t.cartao_id ?? null,
     parcela_total: t.parcela_total ?? 1,
+    anexo_url: t.anexo_url ?? null,
+    anexo_nome: t.anexo_nome ?? null,
   } as const;
 }
 export function normaliseAccount(a: Account) {
