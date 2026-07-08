@@ -2310,7 +2310,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
             <>
               {previewData.fixedPreview.map((f,i) => (
                 <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"4px 0"}}>
-                  <span style={{color:"#1D1D1F"}}>{f.nome}</span>
+                  <span style={{color:"#1D1D1F"}}>{f.nome} <span style={{color:"#86868B",fontSize:11}}>({new Date(f.data+"T00:00:00").toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric"})})</span></span>
                   <span style={{color:"#1D1D1F",fontWeight:600}}>{formatBRL(f.valor)}</span>
                 </div>
               ))}
@@ -2356,7 +2356,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
         </div>
       )}
 
-      {loading ? (
+      {isPreview ? null : loading ? (
         <div style={{textAlign:"center",padding:40,color:"#86868B"}}>Carregando…</div>
       ) : templates.length === 0 ? (
         <div style={{textAlign:"center",padding:"40px 20px",color:"#86868B"}}>
