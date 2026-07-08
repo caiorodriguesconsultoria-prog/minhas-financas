@@ -4,6 +4,7 @@ import type { User } from "@supabase/supabase-js";
 import { supabase, normaliseTx, normaliseAccount } from "./supabase";
 import type { Profile, Account, Transaction, BillToPay, Couple, Investimento, InvestimentoLancamento } from "./supabase";
 import { LoginPage } from "./LoginPage";
+import { isGoogleCalendarConnected, connectGoogleCalendar, disconnectGoogleCalendar, syncBillToCalendar } from "./googleCalendar";
 
 // ─── CSS ──────────────────────────────────────────────────────────────────────
 const STYLE = `
@@ -1895,7 +1896,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
       if (error) { setToast({msg:`Erro ao criar: ${error.message}`,type:"error"}); console.error(error); }
       else {
         if (created && form.primeira_data) {
-          const { error: instErr } = await supabase.from("bills_to_pay").insert({
+          const { data: firstInstance, error: instErr } = await supabase.from("bills_to_pay").insert({
             nome: form.nome.trim(),
             valor_base: form.valor_base ? parseFloat(form.valor_base.replace(",",".")) : 0,
             categoria: form.categoria,
@@ -1904,8 +1905,11 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
             recorrente: false,
             template_id: created.id,
             user_id: userId,
-          });
+          }).select().single();
           if (instErr) console.error(instErr);
+          else if (isGoogleCalendarConnected() && firstInstance) {
+            syncBillToCalendar({ billId: firstInstance.id, title: form.nome.trim(), date: form.primeira_data, amount: parseFloat(form.valor_base.replace(",",".")||"0") }).catch(()=>{});
+          }
         }
         setToast({msg:"Conta fixa criada",type:"success"});
       }
@@ -1921,12 +1925,17 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
     if (instanceForTemplateThisMonth(tpl.id)) { setToast({msg:"Já gerada este mês",type:"error"}); return; }
     if (isPlanCompleted(tpl)) { setToast({msg:"Parcelamento já concluído",type:"error"}); return; }
     const data_vencimento = dueDateForMonthKey(monthKey, tpl.dia_vencimento ?? 5);
-    const { error } = await supabase.from("bills_to_pay").insert({
+    const { data: created, error } = await supabase.from("bills_to_pay").insert({
       nome: tpl.nome, valor_base: tpl.valor_base, categoria: tpl.categoria,
       data_vencimento, status: "pendente", recorrente: false, template_id: tpl.id, user_id: userId,
-    });
+    }).select().single();
     if (error) setToast({msg:"Erro ao gerar",type:"error"});
-    else setToast({msg:"Despesa do mês gerada",type:"success"});
+    else {
+      setToast({msg:"Despesa do mês gerada",type:"success"});
+      if (isGoogleCalendarConnected() && created) {
+        syncBillToCalendar({ billId: created.id, title: tpl.nome ?? "Despesa fixa", date: data_vencimento, amount: tpl.valor_base ?? 0 }).catch(()=>{});
+      }
+    }
     load();
   }
 
@@ -2256,13 +2265,18 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
     const { total } = invoiceTotalFor(card.id, targetMonthKey, transactions, card.dia_fechamento ?? 1);
     const data_vencimento = dueDateForMonthKey(targetMonthKey, card.dia_vencimento ?? 10);
     const existing = all.find(b => b.template_id === card.id && (b.data_vencimento ?? "").startsWith(targetMonthKey));
+    let instanceId: string | null = existing?.id ?? null;
     if (existing) {
       await supabase.from("bills_to_pay").update({ valor_base: total }).eq("id", existing.id);
     } else {
-      await supabase.from("bills_to_pay").insert({
+      const { data: createdInstance } = await supabase.from("bills_to_pay").insert({
         nome: card.nome, categoria: card.categoria, valor_base: total,
         data_vencimento, status: "pendente", recorrente: false, template_id: card.id, user_id: userId,
-      });
+      }).select().single();
+      instanceId = createdInstance?.id ?? null;
+    }
+    if (isGoogleCalendarConnected() && instanceId) {
+      syncBillToCalendar({ billId: instanceId, title: `Fatura ${card.nome}`, date: data_vencimento, amount: total }).catch(()=>{});
     }
     setToast({msg:"Fatura sincronizada",type:"success"});
     load();
@@ -2897,6 +2911,29 @@ function AjustesPage({ user, onSignOut, coupleLink }: { user: User; onSignOut: (
     setUnlinking(false);
   }
 
+  const [gcalConnected, setGcalConnected] = useState(false);
+  const [gcalLoading, setGcalLoading] = useState(false);
+  const [gcalMsg, setGcalMsg] = useState<string|null>(null);
+  useEffect(() => { setGcalConnected(isGoogleCalendarConnected()); }, []);
+
+  async function handleConnectGoogle() {
+    setGcalLoading(true); setGcalMsg(null);
+    try {
+      await connectGoogleCalendar();
+      setGcalConnected(true);
+      setGcalMsg("Conectado! Os vencimentos serão adicionados à sua agenda automaticamente.");
+    } catch (e) {
+      setGcalMsg(e instanceof Error ? e.message : "Erro ao conectar");
+    }
+    setGcalLoading(false);
+  }
+
+  function handleDisconnectGoogle() {
+    disconnectGoogleCalendar();
+    setGcalConnected(false);
+    setGcalMsg(null);
+  }
+
   const INFO_ROWS: {icon:string; label:string; value:string}[] = [
     { icon:"✉️", label:"Email",    value: email },
     { icon:"🔐", label:"Método",   value: user.app_metadata?.provider === "google" ? "Google" : "Magic Link" },
@@ -2927,6 +2964,40 @@ function AjustesPage({ user, onSignOut, coupleLink }: { user: User; onSignOut: (
             <span style={{fontSize:14,fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.value}</span>
           </div>
         ))}
+      </div>
+
+      {/* Google Agenda section */}
+      <div className="section-title" style={{marginBottom:14}}>Google Agenda 📅</div>
+      <div style={{background:"#F5F5F7",borderRadius:16,padding:20,marginBottom:20}}>
+        {gcalConnected ? (
+          <>
+            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
+              <div style={{width:48,height:48,borderRadius:24,background:"linear-gradient(135deg,#34A853,#4285F4)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>
+                ✓
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:15,fontWeight:700,marginBottom:2}}>Agenda conectada</div>
+                <div style={{fontSize:12,color:"#6E6E73"}}>Vencimentos de contas e faturas são adicionados automaticamente</div>
+              </div>
+            </div>
+            <button onClick={handleDisconnectGoogle} style={{width:"100%",padding:"12px",background:"rgba(255,59,48,0.07)",color:"#FF3B30",border:"1.5px solid rgba(255,59,48,0.18)",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              Desconectar
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{fontSize:13,color:"#6E6E73",marginBottom:14,lineHeight:1.5}}>
+              Conecte sua Google Agenda para que os vencimentos de contas fixas e faturas de cartão apareçam automaticamente como lembretes.
+            </div>
+            <button onClick={handleConnectGoogle} disabled={gcalLoading} style={{width:"100%",padding:"12px",background:"#007AFF",color:"#FFF",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit",opacity:gcalLoading?0.6:1}}>
+              {gcalLoading ? "Conectando…" : "Conectar Google Agenda"}
+            </button>
+          </>
+        )}
+        {gcalMsg && <div style={{fontSize:12,color:gcalConnected?"#34C759":"#FF3B30",marginTop:10}}>{gcalMsg}</div>}
+        <div style={{fontSize:11,color:"#9A9A9E",marginTop:10,lineHeight:1.5}}>
+          A conexão dura cerca de 1 hora. Se parar de sincronizar, basta clicar em "Conectar" novamente.
+        </div>
       </div>
 
       {/* Couple section */}
