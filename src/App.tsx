@@ -57,7 +57,7 @@ const STYLE = `
   @keyframes modalBackdropIn { from { opacity:0; } to { opacity:1; } }
   @keyframes modalSheetIn { from { opacity:0; transform:scale(0.92) translateY(14px); } to { opacity:1; transform:scale(1) translateY(0); } }
   .modal-backdrop { animation: modalBackdropIn 0.2s ease both; }
-  .modal-sheet { animation: modalSheetIn 0.32s cubic-bezier(0.32,0.94,0.6,1) both; }
+  .modal-sheet-center { animation: modalSheetIn 0.32s cubic-bezier(0.32,0.94,0.6,1) both; }
 
   /* Scroll area */
   .scroll-content { padding: 20px 16px; padding-bottom: calc(100px + env(safe-area-inset-bottom)); -webkit-overflow-scrolling: touch; }
@@ -1437,7 +1437,7 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-sheet" style={{maxHeight:"92svh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+      <div className="modal-sheet-center" style={{maxHeight:"92svh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <div className="modal-handle" />
         <div className="modal-title">Nova Transação</div>
 
@@ -1723,7 +1723,7 @@ function EditTransacaoModal({ tx, onClose, onSaved, onDeleted, accounts }: {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-sheet" style={{maxHeight:"92svh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+      <div className="modal-sheet-center" style={{maxHeight:"92svh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <div className="modal-handle" />
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
           <div className="modal-title" style={{margin:0}}>Editar Transação</div>
@@ -2442,7 +2442,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
       {/* Form modal */}
       {showForm && createPortal(
         <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowForm(false)}>
-          <div ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
+          <div className="modal-sheet-center" ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar":"Nova"} conta fixa</div>
             <input placeholder="Nome (ex: Aluguel, Internet)" value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
@@ -2525,7 +2525,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
       {/* Calendar link confirmation */}
       {calendarLink && createPortal(
         <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setCalendarLink(null)}>
-          <div className="modal-sheet" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:420,borderRadius:20,padding:24,textAlign:"center"}}>
+          <div className="modal-sheet-center" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:420,borderRadius:20,padding:24,textAlign:"center"}}>
             <div style={{fontSize:32,marginBottom:10}}>📅</div>
             <div style={{fontSize:16,fontWeight:600,marginBottom:6}}>Evento sincronizado!</div>
             <div style={{fontSize:13,color:"#86868B",marginBottom:20}}>Toque no link abaixo para conferir na sua Google Agenda.</div>
@@ -2542,7 +2542,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
       {/* Payment modal */}
       {payingBill && createPortal(
         <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setPayingBill(null)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
+          <div className="modal-sheet-center" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:6}}>Registrar pagamento</div>
             <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>{payingBill.nome} · {formatBRL((payingBill.valor_base??0)+(payingBill.juros_atraso??0))}</div>
 
@@ -2574,7 +2574,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
       {/* History modal */}
       {historyFor && createPortal(
         <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setHistoryFor(null)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"70vh",overflowY:"auto"}}>
+          <div className="modal-sheet-center" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"70vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:14}}>Histórico — {historyFor.nome}</div>
             {historyForTemplate(historyFor.id).length === 0 ? (
               <div style={{fontSize:13,color:"#86868B"}}>Nenhuma cobrança gerada ainda.</div>
@@ -2858,7 +2858,7 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
       {/* Form modal */}
       {showForm && createPortal(
         <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowForm(false)}>
-          <div ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
+          <div className="modal-sheet-center" ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar":"Novo"} cartão de crédito</div>
             <input placeholder="Nome do cartão (ex: Nubank)" value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
@@ -2891,7 +2891,7 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
       {/* Payment modal */}
       {payingBill && createPortal(
         <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setPayingBill(null)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
+          <div className="modal-sheet-center" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:6}}>Registrar pagamento</div>
             <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>{payingBill.nome} · {formatBRL((payingBill.valor_base??0)+(payingBill.juros_atraso??0))}</div>
 
@@ -2923,7 +2923,7 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
       {/* History modal */}
       {historyFor && createPortal(
         <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setHistoryFor(null)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"70vh",overflowY:"auto"}}>
+          <div className="modal-sheet-center" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"70vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:14}}>Histórico — {historyFor.nome}</div>
             {historyForCard(historyFor.id).length === 0 ? (
               <div style={{fontSize:13,color:"#86868B"}}>Nenhuma fatura gerada ainda.</div>
@@ -3299,7 +3299,7 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
       {/* Modal: confirmar aplicação futura */}
       {(pendingSave === "renda" || pendingSave === "invest") && createPortal(
         <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setPendingSave(null)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:420,borderRadius:20,padding:20}}>
+          <div className="modal-sheet-center" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:420,borderRadius:20,padding:20}}>
             <div style={{fontSize:16,fontWeight:600,marginBottom:14}}>Aplicar essa alteração a quais meses?</div>
             <button onClick={()=>salvarPlano(pendingSave==="renda"?"renda_mensal":"investimento_mensal", parseFloat((pendingSave==="renda"?rendaInput:investInput).replace(",","."))||0, false)}
               style={{width:"100%",padding:12,background:"#F5F5F7",color:"#1D1D1F",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginBottom:8}}>
@@ -3317,7 +3317,7 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
       {/* Modal: nova simulação */}
       {showSimForm && createPortal(
         <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowSimForm(false)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
+          <div className="modal-sheet-center" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>Nova simulação de compra</div>
             <input placeholder="O que você quer comprar?" value={simForm.nome} onChange={e=>setSimForm(f=>({...f,nome:e.target.value}))}
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
@@ -3522,7 +3522,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
       {/* Form: novo/editar investimento */}
       {showForm && createPortal(
         <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowForm(false)}>
-          <div ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
+          <div className="modal-sheet-center" ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar":"Novo"} investimento</div>
             <input placeholder="Nome (ex: CDB Banco X, Tesouro IPCA+)" value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
@@ -3554,7 +3554,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
       {/* Detail: lançamentos mensais */}
       {detailFor && createPortal(
         <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setDetailFor(null)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
+          <div className="modal-sheet-center" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:4}}>{detailFor.nome}</div>
             <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>Rendimento acumulado: <strong style={{color:"#34C759"}}>{formatBRL(totalGanhoFor(detailFor.id))}</strong></div>
 
@@ -4216,7 +4216,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 
         {modal === "extrato" && (
           <div className="modal-overlay" onClick={()=>setModal(null)}>
-            <div className="modal-sheet" onClick={e=>e.stopPropagation()}>
+            <div className="modal-sheet-center" onClick={e=>e.stopPropagation()}>
               <div className="modal-handle" />
               <div className="modal-title">Upload de Extrato</div>
               <div style={{background:"#F5F5F7",borderRadius:16,padding:28,textAlign:"center",marginBottom:20,cursor:"pointer",border:"2px dashed #D1D1D6"}}>
@@ -4240,7 +4240,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 
         {modal === "conta" && (
           <div className="modal-overlay" onClick={()=>setModal(null)}>
-            <div className="modal-sheet" onClick={e=>e.stopPropagation()}>
+            <div className="modal-sheet-center" onClick={e=>e.stopPropagation()}>
               <div className="modal-handle" />
               <div className="modal-title">Nova Conta</div>
               <div className="form-field">
