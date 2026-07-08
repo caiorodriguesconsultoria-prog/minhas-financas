@@ -5,6 +5,7 @@ import { supabase, normaliseTx, normaliseAccount } from "./supabase";
 import type { Profile, Account, Transaction, BillToPay, Couple, Investimento, InvestimentoLancamento } from "./supabase";
 import { LoginPage } from "./LoginPage";
 import { isGoogleCalendarConnected, connectGoogleCalendar, disconnectGoogleCalendar, syncBillToCalendar } from "./googleCalendar";
+import { isFaceIdSupported, isFaceIdEnabled, enableFaceId, disableFaceId, unlockWithFaceId } from "./faceIdLock";
 
 // ─── CSS ──────────────────────────────────────────────────────────────────────
 const STYLE = `
@@ -3078,6 +3079,29 @@ function AjustesPage({ user, onSignOut, coupleLink }: { user: User; onSignOut: (
     setGcalMsg(null);
   }
 
+  const [faceIdOn, setFaceIdOn] = useState(false);
+  const [faceIdLoading, setFaceIdLoading] = useState(false);
+  const [faceIdMsg, setFaceIdMsg] = useState<string|null>(null);
+  useEffect(() => { setFaceIdOn(isFaceIdEnabled()); }, []);
+
+  async function handleEnableFaceId() {
+    setFaceIdLoading(true); setFaceIdMsg(null);
+    try {
+      await enableFaceId(email);
+      setFaceIdOn(true);
+      setFaceIdMsg("Ativado! Da próxima vez que abrir o app, ele vai pedir a biometria.");
+    } catch (e) {
+      setFaceIdMsg(e instanceof Error ? e.message : "Erro ao configurar");
+    }
+    setFaceIdLoading(false);
+  }
+
+  function handleDisableFaceId() {
+    disableFaceId();
+    setFaceIdOn(false);
+    setFaceIdMsg(null);
+  }
+
   const INFO_ROWS: {icon:string; label:string; value:string}[] = [
     { icon:"✉️", label:"Email",    value: email },
     { icon:"🔐", label:"Método",   value: user.app_metadata?.provider === "google" ? "Google" : "Magic Link" },
@@ -3143,6 +3167,44 @@ function AjustesPage({ user, onSignOut, coupleLink }: { user: User; onSignOut: (
           A conexão dura cerca de 1 hora. Se parar de sincronizar, basta clicar em "Conectar" novamente.
         </div>
       </div>
+
+      {/* Face ID / Touch ID section */}
+      {isFaceIdSupported() && (
+        <>
+          <div className="section-title" style={{marginBottom:14}}>Bloqueio com Face ID 🔒</div>
+          <div style={{background:"#F5F5F7",borderRadius:16,padding:20,marginBottom:20}}>
+            {faceIdOn ? (
+              <>
+                <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
+                  <div style={{width:48,height:48,borderRadius:24,background:"linear-gradient(135deg,#1D1D1F,#3A3A3C)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>
+                    🔒
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:15,fontWeight:700,marginBottom:2}}>Bloqueio ativado</div>
+                    <div style={{fontSize:12,color:"#6E6E73"}}>O app pede Face ID/Touch ID toda vez que for aberto</div>
+                  </div>
+                </div>
+                <button onClick={handleDisableFaceId} style={{width:"100%",padding:"12px",background:"rgba(255,59,48,0.07)",color:"#FF3B30",border:"1.5px solid rgba(255,59,48,0.18)",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                  Desativar bloqueio
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{fontSize:13,color:"#6E6E73",marginBottom:14,lineHeight:1.5}}>
+                  Ative para que o app peça Face ID, Touch ID ou a biometria do seu celular sempre que for aberto — uma camada extra de privacidade, além do login.
+                </div>
+                <button onClick={handleEnableFaceId} disabled={faceIdLoading} style={{width:"100%",padding:"12px",background:"#007AFF",color:"#FFF",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit",opacity:faceIdLoading?0.6:1}}>
+                  {faceIdLoading ? "Configurando…" : "Ativar Face ID / Touch ID"}
+                </button>
+              </>
+            )}
+            {faceIdMsg && <div style={{fontSize:12,color:faceIdOn?"#34C759":"#FF3B30",marginTop:10}}>{faceIdMsg}</div>}
+            <div style={{fontSize:11,color:"#9A9A9E",marginTop:10,lineHeight:1.5}}>
+              É uma trava local do dispositivo — não substitui o login, só protege o acesso mais rápido.
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Couple section */}
       <div className="section-title" style={{marginBottom:14}}>Conta do Casal 💑</div>
@@ -3229,15 +3291,19 @@ export default function App() {
   // ── Auth state ──────────────────────────────────────────────────────────────
   const [user,        setUser]        = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [locked,      setLocked]      = useState(false);
+  const [unlockErr,   setUnlockErr]   = useState<string | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setAuthLoading(false);
+      if (session?.user && isFaceIdEnabled()) setLocked(true);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       setAuthLoading(false);
+      if (session?.user && isFaceIdEnabled()) setLocked(true);
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -3265,6 +3331,36 @@ export default function App() {
 
   // ── Show login page when not authenticated ──────────────────────────────────
   if (!user) return <LoginPage />;
+
+  // ── Face ID / Touch ID lock gate ─────────────────────────────────────────────
+  if (locked) {
+    return (
+      <>
+        <style>{STYLE}</style>
+        <div style={{minHeight:"100svh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#FFF",fontFamily:"-apple-system,sans-serif",gap:20,padding:24}}>
+          <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+            <rect width="64" height="64" rx="16" fill="#1D1D1F"/>
+            <path d="M17 40L25 31L32 37L46 21" stroke="#34C759" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M38 21H46V29" stroke="#34C759" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          <div style={{fontSize:17,fontWeight:600,color:"#1D1D1F"}}>Minhas Finanças está bloqueado</div>
+          {unlockErr && <div style={{fontSize:13,color:"#FF3B30",textAlign:"center"}}>{unlockErr}</div>}
+          <button
+            onClick={async ()=>{
+              setUnlockErr(null);
+              const ok = await unlockWithFaceId();
+              if (ok) setLocked(false);
+              else setUnlockErr("Não foi possível confirmar. Tente novamente.");
+            }}
+            style={{padding:"14px 28px",background:"#007AFF",color:"#FFF",border:"none",borderRadius:14,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}
+          >
+            🔓 Desbloquear com Face ID / Touch ID
+          </button>
+          <span onClick={handleSignOut} style={{fontSize:13,color:"#86868B",cursor:"pointer"}}>Sair da conta</span>
+        </div>
+      </>
+    );
+  }
 
   // ── Main app ────────────────────────────────────────────────────────────────
   return <MainApp user={user} onSignOut={handleSignOut} />;
