@@ -3420,6 +3420,32 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 
   const { accounts, transactions, bills, loading, error, refetch } = useFinanceData(view, user.id, coupleLink.partnerUserId);
 
+  // Puxar para atualizar (pull-to-refresh)
+  const [pullY, setPullY] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const pullStartY = useRef<number | null>(null);
+  const PULL_THRESHOLD = 70;
+
+  function handleTouchStart(e: React.TouchEvent) {
+    if (window.scrollY <= 0 && !refreshing) pullStartY.current = e.touches[0].clientY;
+  }
+  function handleTouchMove(e: React.TouchEvent) {
+    if (pullStartY.current === null) return;
+    const delta = e.touches[0].clientY - pullStartY.current;
+    if (delta > 0 && window.scrollY <= 0) setPullY(Math.min(delta / 1.8, 100));
+  }
+  async function handleTouchEnd() {
+    if (pullY > PULL_THRESHOLD) {
+      setRefreshing(true);
+      setPullY(60);
+      await refetch();
+      setTimeout(() => { setRefreshing(false); setPullY(0); }, 400);
+    } else {
+      setPullY(0);
+    }
+    pullStartY.current = null;
+  }
+
   const totalIncome  = transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.value,0);
   const totalExpense = transactions.filter(t=>t.type==="expense").reduce((s,t)=>s+t.value,0);
   const saldo        = totalIncome - totalExpense;
@@ -3443,7 +3469,15 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   return (
     <>
       <style>{STYLE}</style>
-      <div className="app">
+      <div className="app" onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
+
+        {(pullY > 0 || refreshing) && (
+          <div style={{position:"absolute",top:0,left:0,right:0,display:"flex",justifyContent:"center",alignItems:"center",height:Math.max(pullY,refreshing?60:0),overflow:"hidden",transition:refreshing?"height 0.2s":"none",zIndex:150}}>
+            <div style={{fontSize:20,transform:`rotate(${Math.min(pullY,100)*3.6}deg)`,transition:refreshing?"transform 0.4s linear infinite":"none",animation:refreshing?"spin 0.7s linear infinite":"none"}}>
+              🔄
+            </div>
+          </div>
+        )}
 
         {/* Sticky header */}
         <div className="seg-wrap">
