@@ -2097,8 +2097,8 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
 
       {/* Form modal */}
       {showForm && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setShowForm(false)}>
-          <div ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:"20px 20px 0 0",padding:20,maxHeight:"85svh",overflowY:"auto",paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowForm(false)}>
+          <div ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar":"Nova"} {isCardForm ? "cartão de crédito" : "conta fixa"}</div>
             <input placeholder={isCardForm ? "Nome do cartão (ex: Nubank)" : "Nome (ex: Aluguel, Internet)"} value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
@@ -2164,8 +2164,8 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
 
       {/* Payment modal */}
       {payingBill && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setPayingBill(null)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:"20px 20px 0 0",padding:20,maxHeight:"85svh",overflowY:"auto",paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setPayingBill(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:6}}>Registrar pagamento</div>
             <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>{payingBill.nome} · {formatBRL((payingBill.valor_base??0)+(payingBill.juros_atraso??0))}</div>
 
@@ -2196,8 +2196,8 @@ function ContasFixasPage({ userId, transactions }: { userId: string; transaction
 
       {/* History modal */}
       {historyFor && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setHistoryFor(null)}>
-          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:"20px 20px 0 0",padding:20,maxHeight:"70vh",overflowY:"auto",paddingBottom:"calc(24px + env(safe-area-inset-bottom))"}}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setHistoryFor(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"70vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:14}}>Histórico — {historyFor.nome}</div>
             {historyForTemplate(historyFor.id).length === 0 ? (
               <div style={{fontSize:13,color:"#86868B"}}>Nenhuma cobrança gerada ainda.</div>
