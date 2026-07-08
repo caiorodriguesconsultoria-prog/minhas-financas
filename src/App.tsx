@@ -2361,7 +2361,8 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
           {templates.map(tpl => {
             const instance = instanceForTemplateThisMonth(tpl.id);
             const paid = (instance?.status ?? "").toLowerCase() === "pago";
-            const geradas = historyForTemplate(tpl.id).length;
+            const historicoOrdenado = historyForTemplate(tpl.id).sort((a,b)=>(a.data_vencimento??"").localeCompare(b.data_vencimento??""));
+            const posicaoAtual = instance ? historicoOrdenado.findIndex(h => h.id === instance.id) + 1 : historicoOrdenado.length;
             const completed = isPlanCompleted(tpl);
             const isCardLinked = tpl.forma_pagamento === "cartao";
             const linkedCardName = isCardLinked ? cardsSummary.find(c=>c.id===tpl.cartao_vinculado_id)?.nome : null;
@@ -2373,7 +2374,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
                     <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>{tpl.nome}</div>
                     <div style={{fontSize:12,color:"#86868B",marginTop:2}}>
                       {tpl.categoria} · {formaLabel}{!isCardLinked ? ` · vence ${instance?.data_vencimento ? new Date(instance.data_vencimento+"T00:00:00").toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}) : `dia ${tpl.dia_vencimento}`}` : ""} · ref. {formatBRL(tpl.valor_base ?? 0)}
-                      {!isCardLinked && (tpl.parcelas_totais ? ` · ${geradas}/${tpl.parcelas_totais} parcelas` : " · corrente")}
+                      {!isCardLinked && (tpl.parcelas_totais ? ` · ${posicaoAtual}/${tpl.parcelas_totais} parcelas` : " · corrente")}
                     </div>
                     {tpl.anexo_url && (
                       <a href={tpl.anexo_url} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:"#007AFF",marginTop:4,display:"inline-block"}}>📎 {tpl.anexo_nome ?? "Ver anexo"}</a>
