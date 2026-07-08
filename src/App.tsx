@@ -2111,19 +2111,40 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
       if (error) { setToast({msg:`Erro ao criar: ${error.message}`,type:"error"}); console.error(error); }
       else {
         if (created && form.primeira_data && form.forma_pagamento !== "cartao") {
-          const { data: firstInstance, error: instErr } = await supabase.from("bills_to_pay").insert({
-            nome: form.nome.trim(),
-            valor_base: form.valor_base ? parseFloat(form.valor_base.replace(",",".")) : 0,
-            categoria: form.categoria,
-            data_vencimento: form.primeira_data,
-            status: "pendente",
-            recorrente: false,
-            template_id: created.id,
-            user_id: userId,
-          }).select().single();
-          if (instErr) console.error(instErr);
-          else if (firstInstance) {
-            syncBillToCalendar(userId, { billId: firstInstance.id, title: form.nome.trim(), date: form.primeira_data, amount: parseFloat(form.valor_base.replace(",",".")||"0") }).catch((e)=>{ console.error("Erro ao sincronizar com Google Agenda:", e); setToast({msg:`Conta salva, mas não sincronizou com a agenda: ${e instanceof Error ? e.message : "erro desconhecido"}`,type:"error"}); });
+          const totalParcelas = form.parcelas_totais ? parseInt(form.parcelas_totais,10) : null;
+          const valorParcela = form.valor_base ? parseFloat(form.valor_base.replace(",",".")) : 0;
+          const primeiraMonthKey = form.primeira_data.slice(0,7);
+
+          if (totalParcelas && totalParcelas > 1) {
+            // Total de parcelas conhecido: gera todas as cobranças de uma vez e já agenda cada uma
+            for (let i = 0; i < totalParcelas; i++) {
+              const mesInstalado = addMonthsToKey(primeiraMonthKey, i);
+              const dataInstalado = i === 0 ? form.primeira_data : dueDateForMonthKey(mesInstalado, diaVencimentoCalculado ?? 5);
+              const { data: inst, error: instErr } = await supabase.from("bills_to_pay").insert({
+                nome: form.nome.trim(), valor_base: valorParcela, categoria: form.categoria,
+                data_vencimento: dataInstalado, status: "pendente", recorrente: false,
+                template_id: created.id, user_id: userId,
+              }).select().single();
+              if (instErr) { console.error(instErr); continue; }
+              if (inst) {
+                syncBillToCalendar(userId, {
+                  billId: inst.id,
+                  title: `${form.nome.trim()} (Parcela ${i+1}/${totalParcelas})`,
+                  date: dataInstalado, amount: valorParcela,
+                }).catch((e)=>console.error("Erro ao sincronizar parcela com Google Agenda:", e));
+              }
+            }
+          } else {
+            // Conta corrente (sem total definido): gera só a primeira, as próximas vêm mês a mês
+            const { data: firstInstance, error: instErr } = await supabase.from("bills_to_pay").insert({
+              nome: form.nome.trim(), valor_base: valorParcela, categoria: form.categoria,
+              data_vencimento: form.primeira_data, status: "pendente", recorrente: false,
+              template_id: created.id, user_id: userId,
+            }).select().single();
+            if (instErr) console.error(instErr);
+            else if (firstInstance) {
+              syncBillToCalendar(userId, { billId: firstInstance.id, title: form.nome.trim(), date: form.primeira_data, amount: valorParcela }).catch((e)=>{ console.error("Erro ao sincronizar com Google Agenda:", e); setToast({msg:`Conta salva, mas não sincronizou com a agenda: ${e instanceof Error ? e.message : "erro desconhecido"}`,type:"error"}); });
+            }
           }
         }
         setToast({msg:"Conta fixa criada",type:"success"});
@@ -2150,7 +2171,9 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
     else {
       setToast({msg:"Despesa do mês gerada",type:"success"});
       if (created) {
-        syncBillToCalendar(userId, { billId: created.id, title: tpl.nome ?? "Despesa fixa", date: data_vencimento, amount: tpl.valor_base ?? 0 }).catch((e)=>{ console.error("Erro ao sincronizar com Google Agenda:", e); });
+        const numeroParcela = historyForTemplate(tpl.id).length; // já inclui a recém-criada
+        const tituloAgenda = tpl.parcelas_totais ? `${tpl.nome} (Parcela ${numeroParcela}/${tpl.parcelas_totais})` : (tpl.nome ?? "Despesa fixa");
+        syncBillToCalendar(userId, { billId: created.id, title: tituloAgenda, date: data_vencimento, amount: tpl.valor_base ?? 0 }).catch((e)=>{ console.error("Erro ao sincronizar com Google Agenda:", e); });
       }
     }
     load();
@@ -2176,10 +2199,17 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
     load();
   }
 
-  async function addInstanceToCalendar(instance: BillToPay, nome: string) {
+  async function addInstanceToCalendar(instance: BillToPay, tpl: BillToPay) {
     try {
-      await syncBillToCalendar(userId, { billId: instance.id, title: nome, date: instance.data_vencimento ?? todayIso, amount: (instance.valor_base??0)+(instance.juros_atraso??0) });
-      setToast({msg:"Adicionado à agenda",type:"success"});
+      let titulo = tpl.nome ?? "Conta fixa";
+      if (tpl.parcelas_totais) {
+        const historico = historyForTemplate(tpl.id).sort((a,b)=>(a.data_vencimento??"").localeCompare(b.data_vencimento??""));
+        const posicao = historico.findIndex(h => h.id === instance.id);
+        if (posicao >= 0) titulo = `${titulo} (Parcela ${posicao+1}/${tpl.parcelas_totais})`;
+      }
+      const result = await syncBillToCalendar(userId, { billId: instance.id, title: titulo, date: instance.data_vencimento ?? todayIso, amount: (instance.valor_base??0)+(instance.juros_atraso??0) });
+      setToast({msg:"Adicionado à agenda — abrindo o evento…",type:"success"});
+      if (result.htmlLink) window.open(result.htmlLink, "_blank");
     } catch (e) {
       setToast({msg: e instanceof Error ? e.message : "Erro ao adicionar à agenda", type:"error"});
     }
@@ -2370,7 +2400,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
                           </span>
                         </div>
                         <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                          <span onClick={()=>addInstanceToCalendar(instance, tpl.nome ?? "Conta fixa")} title="Adicionar à agenda" style={{fontSize:14,cursor:"pointer"}}>📅</span>
+                          <span onClick={()=>addInstanceToCalendar(instance, tpl)} title="Adicionar à agenda" style={{fontSize:14,cursor:"pointer"}}>📅</span>
                           <span onClick={()=>setHistoryFor(tpl)} style={{fontSize:12,color:"#007AFF",cursor:"pointer"}}>Histórico</span>
                         </div>
                       </div>

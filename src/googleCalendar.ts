@@ -135,7 +135,7 @@ async function findExistingEvent(token: string, billId: string): Promise<string 
   return data.items?.[0]?.id ?? null;
 }
 
-export async function syncBillToCalendar(userId: string, input: CalendarEventInput): Promise<void> {
+export async function syncBillToCalendar(userId: string, input: CalendarEventInput): Promise<{ id: string; htmlLink?: string }> {
   const token = await getValidAccessToken(userId);
   if (!token) throw new Error("Google Agenda não conectado");
 
@@ -170,4 +170,6 @@ export async function syncBillToCalendar(userId: string, input: CalendarEventInp
     const errText = await res.text();
     throw new Error(`Erro ao sincronizar com o Google Agenda: ${errText}`);
   }
+  const data = await res.json();
+  return { id: data.id, htmlLink: data.htmlLink };
 }
