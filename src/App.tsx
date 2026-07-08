@@ -7,6 +7,23 @@ import { LoginPage } from "./LoginPage";
 import { isGoogleCalendarConnected, connectGoogleCalendar, disconnectGoogleCalendar, syncBillToCalendar } from "./googleCalendar";
 import { isFaceIdSupported, isFaceIdEnabled, enableFaceId, disableFaceId, unlockWithFaceId } from "./faceIdLock";
 
+// Atualiza os dados automaticamente sempre que o app volta a ficar visível
+// (ex: trocou de app e voltou, destravou o celular, reabriu depois de um tempo).
+function useRefetchOnFocus(callback: () => void) {
+  useEffect(() => {
+    function handleVisibility() {
+      if (document.visibilityState === "visible") callback();
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+}
+
 // ─── CSS ──────────────────────────────────────────────────────────────────────
 const STYLE = `
   @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&display=swap');
@@ -422,6 +439,8 @@ function useFinanceData(view: ViewType, userId: string | null, partnerUserId: st
   }, [view, userId, partnerUserId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useRefetchOnFocus(load);
 
   return { accounts, transactions, bills, profiles, loading, error, refetch: load };
 }
@@ -1916,6 +1935,8 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useRefetchOnFocus(load);
+
   useEffect(() => { if (toast) { const t = setTimeout(()=>setToast(null), toast.type==="error"?8000:3000); return () => clearTimeout(t); } }, [toast]);
 
   const templates = all.filter(b => b.recorrente);
@@ -2359,6 +2380,8 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
+  useRefetchOnFocus(load);
+
   useEffect(() => { if (toast) { const t = setTimeout(()=>setToast(null), toast.type==="error"?8000:3000); return () => clearTimeout(t); } }, [toast]);
 
   const cards = all.filter(b => b.recorrente && !!b.dia_fechamento);
@@ -2800,6 +2823,8 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
+  useRefetchOnFocus(load);
+
 
   const lancamentosFor = (invId: string) => lancamentos.filter(l => l.investimento_id === invId);
   const totalGanhoFor = (invId: string) => lancamentosFor(invId).reduce((s,l)=>s+(l.valor_ganho??0),0);
@@ -3433,18 +3458,27 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
                 Minhas <strong style={{fontWeight:700}}>Finanças</strong>
               </span>
             </div>
-            {/* User avatar */}
-            <div
-              style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"4px 8px 4px 4px",borderRadius:20,background:"#F5F5F7",transition:"background 0.15s"}}
-              onClick={()=>handleNav("ajustes")}
-              title={userDisplay}
-            >
-              <div style={{width:30,height:30,borderRadius:15,background:"linear-gradient(135deg,#007AFF,#0055D4)",display:"flex",alignItems:"center",justifyContent:"center",color:"#FFF",fontSize:13,fontWeight:700,flexShrink:0}}>
-                {userInitial}
+            {/* Refresh + User avatar */}
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <div
+                onClick={()=>refetch()}
+                title="Atualizar dados"
+                style={{width:34,height:34,borderRadius:17,background:"#F5F5F7",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:15,flexShrink:0}}
+              >
+                🔄
               </div>
-              <span style={{fontSize:13,fontWeight:500,color:"#3C3C43",maxWidth:110,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              <div
+                style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"4px 8px 4px 4px",borderRadius:20,background:"#F5F5F7",transition:"background 0.15s"}}
+                onClick={()=>handleNav("ajustes")}
+                title={userDisplay}
+              >
+                <div style={{width:30,height:30,borderRadius:15,background:"linear-gradient(135deg,#007AFF,#0055D4)",display:"flex",alignItems:"center",justifyContent:"center",color:"#FFF",fontSize:13,fontWeight:700,flexShrink:0}}>
+                  {userInitial}
+                </div>
+                <span style={{fontSize:13,fontWeight:500,color:"#3C3C43",maxWidth:110,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                 {userName ?? user.email?.split("@")[0] ?? "Usuário"}
               </span>
+              </div>
             </div>
           </div>
           {navPage === "home" && (
