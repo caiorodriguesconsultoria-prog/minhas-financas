@@ -2027,6 +2027,40 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
     !!b.data_vencimento && b.data_vencimento < todayIso && (b.status ?? "").toLowerCase() !== "pago";
   const overdueBills = all.filter(b => !!b.data_vencimento && isOverdue(b));
 
+  // Prévia de mês/ano futuro (planejamento) — não gera nada no banco, só calcula
+  const [previewMonth, setPreviewMonth] = useState<string | null>(null);
+  const [showMonthInput, setShowMonthInput] = useState(false);
+  const isPreview = previewMonth !== null && previewMonth !== monthKey;
+
+  function monthsBetween(fromKey: string, toKey: string): number {
+    const [fy,fm] = fromKey.split("-").map(Number);
+    const [ty,tm] = toKey.split("-").map(Number);
+    return (ty*12+tm) - (fy*12+fm);
+  }
+
+  const previewData = (() => {
+    if (!isPreview || !previewMonth) return null;
+    const monthsAhead = monthsBetween(monthKey, previewMonth);
+    const fixedPreview = templates
+      .filter(t => t.forma_pagamento !== "cartao")
+      .map(t => {
+        const geradas = historyForTemplate(t.id).length;
+        const restantes = t.parcelas_totais ? t.parcelas_totais - geradas : null;
+        const aindaAtivo = restantes === null || monthsAhead < restantes;
+        return aindaAtivo ? { nome: t.nome ?? "Conta", valor: t.valor_base ?? 0, data: dueDateForMonthKey(previewMonth, t.dia_vencimento ?? 5) } : null;
+      })
+      .filter((x): x is { nome:string; valor:number; data:string } => x !== null);
+
+    const cardsPreview = cardsSummary.map(card => ({
+      nome: card.nome ?? "Cartão",
+      valor: invoiceTotalFor(card.id, previewMonth, transactions, card.dia_fechamento ?? 1, templates).total,
+    })).filter(c => c.valor > 0);
+
+    const totalFixed = fixedPreview.reduce((s,f)=>s+f.valor,0);
+    const totalCards = cardsPreview.reduce((s,c)=>s+c.valor,0);
+    return { fixedPreview, cardsPreview, totalFixed, totalCards, total: totalFixed+totalCards };
+  })();
+
   async function saveTemplate() {
     if (!form.nome.trim()) { setToast({msg:"Preencha o nome",type:"error"}); return; }
     if (!form.valor_base) { setToast({msg:"Preencha o valor",type:"error"}); return; }
@@ -2183,6 +2217,57 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
         <div className="section-title" style={{margin:0}}>Contas Fixas</div>
         <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",valor_base:"",primeira_data:"",categoria:CATEGORIAS_FIXAS[0],parcelas_totais:"",forma_pagamento:"pix",cartao_vinculado_id:""});setAnexoFile(null);setRemoveAnexo(false);setShowForm(true);}}>+ Nova conta fixa</span>
       </div>
+
+      <div style={{display:"flex",gap:8,marginBottom:14}}>
+        <button onClick={()=>{setShowMonthInput(v=>!v); if (!previewMonth) setPreviewMonth(monthKey);}}
+          style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid #E5E5EA",background:isPreview?"#007AFF":"#FFF",color:isPreview?"#FFF":"#1D1D1F",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+          📅 {isPreview && previewMonth ? `Prévia: ${monthKeyLabel(previewMonth)}` : "Ver mês futuro"}
+        </button>
+        {isPreview && (
+          <button onClick={()=>{setPreviewMonth(null);setShowMonthInput(false);}} style={{padding:"9px 14px",borderRadius:10,border:"1.5px solid #E5E5EA",background:"#FFF",color:"#86868B",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+            Voltar a hoje
+          </button>
+        )}
+      </div>
+
+      {showMonthInput && (
+        <div style={{marginTop:-8,marginBottom:14}}>
+          <input type="month" value={previewMonth ?? monthKey} min={monthKey}
+            onChange={e=>{setPreviewMonth(e.target.value); setShowMonthInput(false);}}
+            style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,fontFamily:"inherit"}} />
+        </div>
+      )}
+
+      {isPreview && previewData && (
+        <div style={{background:"#F0F7FF",border:"1px solid #B3D9FF",borderRadius:16,padding:16,marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:600,color:"#007AFF",marginBottom:10}}>📋 Prévia para {monthKeyLabel(previewMonth!)}</div>
+          {previewData.fixedPreview.length === 0 && previewData.cardsPreview.length === 0 ? (
+            <div style={{fontSize:13,color:"#6E6E73"}}>Nenhuma conta ou fatura prevista para esse mês.</div>
+          ) : (
+            <>
+              {previewData.fixedPreview.map((f,i) => (
+                <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"4px 0"}}>
+                  <span style={{color:"#1D1D1F"}}>{f.nome}</span>
+                  <span style={{color:"#1D1D1F",fontWeight:600}}>{formatBRL(f.valor)}</span>
+                </div>
+              ))}
+              {previewData.cardsPreview.map((c,i) => (
+                <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"4px 0"}}>
+                  <span style={{color:"#1D1D1F"}}>💳 {c.nome}</span>
+                  <span style={{color:"#1D1D1F",fontWeight:600}}>{formatBRL(c.valor)}</span>
+                </div>
+              ))}
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:14,fontWeight:700,marginTop:10,paddingTop:10,borderTop:"1px solid #B3D9FF"}}>
+                <span>Total previsto</span>
+                <span>{formatBRL(previewData.total)}</span>
+              </div>
+            </>
+          )}
+          <div style={{fontSize:11,color:"#6E6E73",marginTop:10,lineHeight:1.5}}>
+            Estimativa baseada nas contas e parcelamentos já cadastrados — nada aqui é gerado de verdade no banco.
+          </div>
+        </div>
+      )}
 
       {cardsSummary.length > 0 && (
         <div onClick={onOpenCartoes} style={{background:"#F5F5F7",borderRadius:14,padding:"12px 14px",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
