@@ -54,6 +54,10 @@ const STYLE = `
   /* Page transition */
   .page-fade { animation: pageFadeIn 0.22s ease both; will-change: opacity,transform; }
   @keyframes pageFadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  @keyframes modalBackdropIn { from { opacity:0; } to { opacity:1; } }
+  @keyframes modalSheetIn { from { opacity:0; transform:scale(0.92) translateY(14px); } to { opacity:1; transform:scale(1) translateY(0); } }
+  .modal-backdrop { animation: modalBackdropIn 0.2s ease both; }
+  .modal-sheet { animation: modalSheetIn 0.32s cubic-bezier(0.32,0.94,0.6,1) both; }
 
   /* Scroll area */
   .scroll-content { padding: 20px 16px; padding-bottom: calc(100px + env(safe-area-inset-bottom)); -webkit-overflow-scrolling: touch; }
@@ -123,6 +127,10 @@ const STYLE = `
   .spinner-wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:60px 20px; gap:16px; }
   .spinner { width:36px; height:36px; border:3px solid #E5E5EA; border-top-color:#007AFF; border-radius:50%; animation:spin 0.8s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
+  @keyframes modalOverlayFade { from { opacity:0; } to { opacity:1; } }
+  @keyframes modalSheetPop { from { opacity:0; transform:scale(0.94) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }
+  .modal-overlay-anim { animation: modalOverlayFade 0.22s cubic-bezier(0.22,1,0.36,1) both; }
+  .modal-sheet-anim { animation: modalSheetPop 0.28s cubic-bezier(0.22,1,0.36,1) both; }
   .spinner-text { font-size:14px; color:#6E6E73; }
 
   /* Toast / error banner */
@@ -2115,7 +2123,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
           }).select().single();
           if (instErr) console.error(instErr);
           else if (firstInstance) {
-            syncBillToCalendar(userId, { billId: firstInstance.id, title: form.nome.trim(), date: form.primeira_data, amount: parseFloat(form.valor_base.replace(",",".")||"0") }).catch(()=>{});
+            syncBillToCalendar(userId, { billId: firstInstance.id, title: form.nome.trim(), date: form.primeira_data, amount: parseFloat(form.valor_base.replace(",",".")||"0") }).catch((e)=>{ console.error("Erro ao sincronizar com Google Agenda:", e); setToast({msg:`Conta salva, mas não sincronizou com a agenda: ${e instanceof Error ? e.message : "erro desconhecido"}`,type:"error"}); });
           }
         }
         setToast({msg:"Conta fixa criada",type:"success"});
@@ -2142,7 +2150,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
     else {
       setToast({msg:"Despesa do mês gerada",type:"success"});
       if (created) {
-        syncBillToCalendar(userId, { billId: created.id, title: tpl.nome ?? "Despesa fixa", date: data_vencimento, amount: tpl.valor_base ?? 0 }).catch(()=>{});
+        syncBillToCalendar(userId, { billId: created.id, title: tpl.nome ?? "Despesa fixa", date: data_vencimento, amount: tpl.valor_base ?? 0 }).catch((e)=>{ console.error("Erro ao sincronizar com Google Agenda:", e); });
       }
     }
     load();
@@ -2377,7 +2385,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
 
       {/* Form modal */}
       {showForm && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowForm(false)}>
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowForm(false)}>
           <div ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar":"Nova"} conta fixa</div>
             <input placeholder="Nome (ex: Aluguel, Internet)" value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
@@ -2460,7 +2468,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
 
       {/* Payment modal */}
       {payingBill && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setPayingBill(null)}>
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setPayingBill(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:6}}>Registrar pagamento</div>
             <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>{payingBill.nome} · {formatBRL((payingBill.valor_base??0)+(payingBill.juros_atraso??0))}</div>
@@ -2492,7 +2500,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
 
       {/* History modal */}
       {historyFor && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setHistoryFor(null)}>
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setHistoryFor(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"70vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:14}}>Histórico — {historyFor.nome}</div>
             {historyForTemplate(historyFor.id).length === 0 ? (
@@ -2604,7 +2612,7 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
       instanceId = createdInstance?.id ?? null;
     }
     if (instanceId) {
-      syncBillToCalendar(userId, { billId: instanceId, title: `Fatura ${card.nome}`, date: data_vencimento, amount: total }).catch(()=>{});
+      syncBillToCalendar(userId, { billId: instanceId, title: `Fatura ${card.nome}`, date: data_vencimento, amount: total }).catch((e)=>{ console.error("Erro ao sincronizar fatura com Google Agenda:", e); });
     }
     setToast({msg:"Fatura sincronizada",type:"success"});
     load();
@@ -2770,7 +2778,7 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
 
       {/* Form modal */}
       {showForm && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowForm(false)}>
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowForm(false)}>
           <div ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar":"Novo"} cartão de crédito</div>
             <input placeholder="Nome do cartão (ex: Nubank)" value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
@@ -2803,7 +2811,7 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
 
       {/* Payment modal */}
       {payingBill && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setPayingBill(null)}>
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setPayingBill(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:6}}>Registrar pagamento</div>
             <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>{payingBill.nome} · {formatBRL((payingBill.valor_base??0)+(payingBill.juros_atraso??0))}</div>
@@ -2835,7 +2843,7 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
 
       {/* History modal */}
       {historyFor && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setHistoryFor(null)}>
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setHistoryFor(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"70vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:14}}>Histórico — {historyFor.nome}</div>
             {historyForCard(historyFor.id).length === 0 ? (
@@ -3211,7 +3219,7 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
 
       {/* Modal: confirmar aplicação futura */}
       {(pendingSave === "renda" || pendingSave === "invest") && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setPendingSave(null)}>
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setPendingSave(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:420,borderRadius:20,padding:20}}>
             <div style={{fontSize:16,fontWeight:600,marginBottom:14}}>Aplicar essa alteração a quais meses?</div>
             <button onClick={()=>salvarPlano(pendingSave==="renda"?"renda_mensal":"investimento_mensal", parseFloat((pendingSave==="renda"?rendaInput:investInput).replace(",","."))||0, false)}
@@ -3229,7 +3237,7 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
 
       {/* Modal: nova simulação */}
       {showSimForm && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowSimForm(false)}>
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowSimForm(false)}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>Nova simulação de compra</div>
             <input placeholder="O que você quer comprar?" value={simForm.nome} onChange={e=>setSimForm(f=>({...f,nome:e.target.value}))}
@@ -3434,7 +3442,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
 
       {/* Form: novo/editar investimento */}
       {showForm && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowForm(false)}>
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setShowForm(false)}>
           <div ref={formSheetRef} onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>{editing?"Editar":"Novo"} investimento</div>
             <input placeholder="Nome (ex: CDB Banco X, Tesouro IPCA+)" value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))}
@@ -3466,7 +3474,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
 
       {/* Detail: lançamentos mensais */}
       {detailFor && createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setDetailFor(null)}>
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setDetailFor(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:4}}>{detailFor.nome}</div>
             <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>Rendimento acumulado: <strong style={{color:"#34C759"}}>{formatBRL(totalGanhoFor(detailFor.id))}</strong></div>
