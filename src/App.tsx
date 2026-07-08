@@ -293,8 +293,29 @@ function getCardIcon(name: string) {
   if (n.includes("inter"))   return "🟠";
   if (n.includes("itaú") || n.includes("itau")) return "🔵";
   if (n.includes("bradesco")) return "🔴";
-  if (n.includes("caixa"))   return "🟦";
+  if (n.includes("caixa") || n.includes("cef")) return "🟦";
+  if (n.includes("santander")) return "🔴";
+  if (n.includes("c6"))       return "⚫";
+  if (n.includes("xp"))       return "⬛";
   return "🏦";
+}
+
+function getCardInitials(name: string): string {
+  const n = (name ?? "").trim();
+  if (!n) return "?";
+  const clean = n.toLowerCase();
+  if (clean.includes("nubank")) return "Nu";
+  if (clean.includes("itaú") || clean.includes("itau")) return "It";
+  if (clean.includes("bradesco")) return "Bra";
+  if (clean.includes("santander")) return "San";
+  if (clean.includes("caixa") || clean.includes("cef")) return "CX";
+  if (clean.includes("brasil") || clean === "bb" || clean.includes(" bb")) return "BB";
+  if (clean.includes("inter")) return "In";
+  if (clean.includes("c6")) return "C6";
+  if (clean.includes("xp")) return "XP";
+  const words = n.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  return n.slice(0, 2).toUpperCase();
 }
 
 function getCardColor(name: string): string {
@@ -303,12 +324,21 @@ function getCardColor(name: string): string {
   if (n.includes("inter"))    return "#FF6B00";
   if (n.includes("itaú") || n.includes("itau")) return "#EC7000";
   if (n.includes("bradesco")) return "#CC092F";
-  if (n.includes("caixa"))    return "#0066CC";
+  if (n.includes("caixa") || n.includes("cef")) return "#0066CC";
   if (n.includes("brasil") || n.includes(" bb")) return "#F7D117";
+  if (n.includes("santander")) return "#EC0000";
+  if (n.includes("c6")) return "#1D1D1F";
+  if (n.includes("xp")) return "#1D1D1F";
   const palette = ["#007AFF","#34C759","#FF9500","#AF52DE","#5AC8FA","#FF2D55"];
   let hash = 0;
   for (const c of n) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
   return palette[hash % palette.length];
+}
+
+function getCardTextColor(name: string): string {
+  const n = (name ?? "").toLowerCase();
+  if (n.includes("brasil") || n.includes(" bb")) return "#1D1D1F";
+  return "#FFFFFF";
 }
 
 const formatBRL = (v: number) =>
@@ -979,28 +1009,56 @@ function HomePage({
           </div>
 
           {/* Gráfico de pizza + lista */}
-          <div style={{display:"flex",gap:20,alignItems:"center",flexWrap:"wrap",justifyContent:"center",marginBottom:16}}>
-            <DonutChart segments={accSegments} selected={selectedAccSlice} onSelect={setSelectedAccSlice} total={totalBalance} />
-          </div>
+          {totalBalance > 0.05 ? (
+            <div style={{display:"flex",gap:20,alignItems:"center",flexWrap:"wrap",justifyContent:"center",marginBottom:16}}>
+              <DonutChart segments={accSegments} selected={selectedAccSlice} onSelect={setSelectedAccSlice} total={totalBalance} />
+            </div>
+          ) : (
+            <div style={{textAlign:"center",fontSize:12,color:"#86868B",marginBottom:16,lineHeight:1.5}}>
+              Cadastre o saldo de cada conta (toque no ✏️ ao lado) para ver a distribuição no gráfico.
+            </div>
+          )}
 
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
             {accounts.map((acc, i) => (
               <div key={acc.id}
                 onClick={()=>setSelectedAccSlice(selectedAccSlice===i?null:i)}
                 style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:selectedAccSlice===i?"#F0F7FF":"#F5F5F7",borderRadius:14,cursor:"pointer",border:selectedAccSlice===i?"1.5px solid #007AFF":"1.5px solid transparent",transition:"all 0.15s"}}>
-                <div style={{width:38,height:38,borderRadius:19,background:getCardColor(acc.name),display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>
-                  {getCardIcon(acc.name)}
+                <div style={{
+                  width:44,height:44,borderRadius:14,flexShrink:0,
+                  background:`linear-gradient(145deg, ${getCardColor(acc.name)}dd, ${getCardColor(acc.name)})`,
+                  boxShadow:"0 3px 6px rgba(0,0,0,0.22), inset 0 1px 1px rgba(255,255,255,0.45), inset 0 -2px 3px rgba(0,0,0,0.18)",
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                }}>
+                  <span style={{fontSize:14,fontWeight:800,color:getCardTextColor(acc.name),letterSpacing:"-0.3px"}}>{getCardInitials(acc.name)}</span>
                 </div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:14,fontWeight:600,color:"#1D1D1F",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{acc.name}</div>
                   <div style={{fontSize:11,color:"#86868B"}}>{acc.type === "savings" ? "Poupança" : "Conta corrente"}</div>
                 </div>
                 <div style={{fontSize:15,fontWeight:700,color:"#1D1D1F"}}>{formatBRL(acc.balance)}</div>
+                <span
+                  onClick={async (e)=>{
+                    e.stopPropagation();
+                    const novo = window.prompt(`Novo saldo de ${acc.name} (R$)`, String(acc.balance));
+                    if (novo === null) return;
+                    const valor = parseFloat(novo.replace(",","."));
+                    if (isNaN(valor)) return;
+                    await supabase.from("accounts").update({ saldo_inicial: valor }).eq("id", acc.id);
+                    refetch();
+                  }}
+                  style={{fontSize:14,cursor:"pointer",marginLeft:2,flexShrink:0}}
+                >✏️</span>
               </div>
             ))}
             <div onClick={onOpenInvestimentos} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"#1D1D1F",borderRadius:14,cursor:"pointer"}}>
-              <div style={{width:38,height:38,borderRadius:19,background:"#34C759",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>
-                📈
+              <div style={{
+                width:44,height:44,borderRadius:14,flexShrink:0,
+                background:"linear-gradient(145deg,#3ddc6fdd,#34C759)",
+                boxShadow:"0 3px 6px rgba(0,0,0,0.22), inset 0 1px 1px rgba(255,255,255,0.45), inset 0 -2px 3px rgba(0,0,0,0.18)",
+                display:"flex",alignItems:"center",justifyContent:"center",
+              }}>
+                <span style={{fontSize:18}}>📈</span>
               </div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:14,fontWeight:600,color:"#FFF"}}>Investimentos</div>
