@@ -3289,7 +3289,7 @@ function AjustesPage({ user, onSignOut, coupleLink }: { user: User; onSignOut: (
         )}
         {gcalMsg && <div style={{fontSize:12,color:gcalConnected?"#34C759":"#FF3B30",marginTop:10}}>{gcalMsg}</div>}
         <div style={{fontSize:11,color:"#9A9A9E",marginTop:10,lineHeight:1.5}}>
-          A conexão dura cerca de 1 hora. Se parar de sincronizar, basta clicar em "Conectar" novamente.
+          A conexão se renova sozinha em segundo plano — não é preciso reconectar periodicamente.
         </div>
       </div>
 
