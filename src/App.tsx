@@ -297,6 +297,20 @@ function getCardIcon(name: string) {
   return "🏦";
 }
 
+function getCardColor(name: string): string {
+  const n = (name ?? "").toLowerCase();
+  if (n.includes("nubank"))   return "#8A05BE";
+  if (n.includes("inter"))    return "#FF6B00";
+  if (n.includes("itaú") || n.includes("itau")) return "#EC7000";
+  if (n.includes("bradesco")) return "#CC092F";
+  if (n.includes("caixa"))    return "#0066CC";
+  if (n.includes("brasil") || n.includes(" bb")) return "#F7D117";
+  const palette = ["#007AFF","#34C759","#FF9500","#AF52DE","#5AC8FA","#FF2D55"];
+  let hash = 0;
+  for (const c of n) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
+  return palette[hash % palette.length];
+}
+
 const formatBRL = (v: number) =>
   (v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -904,7 +918,6 @@ function HomePage({
   const [selectedBar, setSelectedBar] = useState<number|null>(null);
   const [txFilter,    setTxFilter]    = useState<"todos"|"receita"|"despesa">("todos");
   const [showFilter,  setShowFilter]  = useState(false);
-  const [showAllAccounts, setShowAllAccounts] = useState(false);
   const [totalInvestido, setTotalInvestido] = useState<number | null>(null);
   useEffect(() => { const t = setTimeout(() => setBarsReady(true), 60); return () => clearTimeout(t); }, []);
   useEffect(() => {
@@ -946,61 +959,57 @@ function HomePage({
     );
   }
 
+  const [selectedAccSlice, setSelectedAccSlice] = useState<number|null>(null);
+  const accSegments = buildPieSegments(accounts.map(a => ({ label: a.name, value: Math.max(a.balance,0.01), color: getCardColor(a.name) })));
+
   return (
     <div className="scroll-content page-fade">
       {/* Accounts */}
       <div className="section-header">
         <span className="section-title">Contas</span>
-        <span className="section-link" onClick={()=>setShowAllAccounts(v=>!v)}>{showAllAccounts?"Ver menos":"Ver tudo"}</span>
       </div>
       {loading ? <Spinner /> : accounts.length === 0 ? (
         <EmptyState icon="🏦" title="Nenhuma conta" desc="Adicione contas no Supabase para vê-las aqui." />
-      ) : showAllAccounts ? (
-        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12}}>
-          <div className="account-card card-total card-enter" style={{animationDelay:"0s",width:"100%"}}>
-            <div className="card-icon">💰</div>
-            <div className="card-bank-name">Total Geral</div>
-            <div className="card-balance">{formatBRL(totalBalance)}</div>
-            <div className="card-label">{accounts.length} conta{accounts.length>1?"s":""} ativa{accounts.length>1?"s":""}</div>
-          </div>
-          {accounts.map((acc, i) => (
-            <div key={acc.id} className={`account-card ${getCardClass(acc.name)} card-enter`} style={{animationDelay:`${(i+1)*0.06}s`,width:"100%"}}>
-              <div className="card-icon">{getCardIcon(acc.name)}</div>
-              <div className="card-bank-name">{acc.name}</div>
-              <div className="card-balance">{formatBRL(acc.balance)}</div>
-              <div className="card-label">{acc.type === "savings" ? "Poupança" : "Conta corrente"}</div>
-            </div>
-          ))}
-          <div onClick={onOpenInvestimentos} className="account-card card-enter" style={{width:"100%",animationDelay:`${(accounts.length+1)*0.06}s`,background:"linear-gradient(135deg,#1D1D1F,#3A3A3C)"}}>
-            <div className="card-icon">📈</div>
-            <div className="card-bank-name" style={{color:"#FFF"}}>Investimentos</div>
-            <div className="card-balance" style={{color:"#FFF"}}>{totalInvestido===null?"…":formatBRL(totalInvestido)}</div>
-            <div className="card-label" style={{color:"rgba(255,255,255,0.7)"}}>Ver detalhes</div>
-          </div>
-        </div>
       ) : (
-        <div className="cards-scroll">
-          <div className="account-card card-total card-enter" style={{animationDelay:"0s"}}>
-            <div className="card-icon">💰</div>
-            <div className="card-bank-name">Total Geral</div>
-            <div className="card-balance">{formatBRL(totalBalance)}</div>
-            <div className="card-label">{accounts.length} conta{accounts.length>1?"s":""} ativa{accounts.length>1?"s":""}</div>
+        <>
+          {/* Barra do total geral */}
+          <div style={{background:"linear-gradient(135deg,#007AFF,#0055D4)",borderRadius:20,padding:20,marginBottom:16,color:"#FFF"}}>
+            <div style={{fontSize:12,opacity:0.85,marginBottom:4}}>Saldo total · {accounts.length} conta{accounts.length>1?"s":""} ativa{accounts.length>1?"s":""}</div>
+            <div style={{fontSize:28,fontWeight:700,letterSpacing:"-0.5px"}}>{formatBRL(totalBalance)}</div>
           </div>
-          {accounts.map((acc, i) => (
-            <div key={acc.id} className={`account-card ${getCardClass(acc.name)} card-enter`} style={{animationDelay:`${(i+1)*0.06}s`}}>
-              <div className="card-icon">{getCardIcon(acc.name)}</div>
-              <div className="card-bank-name">{acc.name}</div>
-              <div className="card-balance">{formatBRL(acc.balance)}</div>
-              <div className="card-label">{acc.type === "savings" ? "Poupança" : "Conta corrente"}</div>
+
+          {/* Gráfico de pizza + lista */}
+          <div style={{display:"flex",gap:20,alignItems:"center",flexWrap:"wrap",justifyContent:"center",marginBottom:16}}>
+            <DonutChart segments={accSegments} selected={selectedAccSlice} onSelect={setSelectedAccSlice} total={totalBalance} />
+          </div>
+
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {accounts.map((acc, i) => (
+              <div key={acc.id}
+                onClick={()=>setSelectedAccSlice(selectedAccSlice===i?null:i)}
+                style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:selectedAccSlice===i?"#F0F7FF":"#F5F5F7",borderRadius:14,cursor:"pointer",border:selectedAccSlice===i?"1.5px solid #007AFF":"1.5px solid transparent",transition:"all 0.15s"}}>
+                <div style={{width:38,height:38,borderRadius:19,background:getCardColor(acc.name),display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>
+                  {getCardIcon(acc.name)}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:14,fontWeight:600,color:"#1D1D1F",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{acc.name}</div>
+                  <div style={{fontSize:11,color:"#86868B"}}>{acc.type === "savings" ? "Poupança" : "Conta corrente"}</div>
+                </div>
+                <div style={{fontSize:15,fontWeight:700,color:"#1D1D1F"}}>{formatBRL(acc.balance)}</div>
+              </div>
+            ))}
+            <div onClick={onOpenInvestimentos} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"#1D1D1F",borderRadius:14,cursor:"pointer"}}>
+              <div style={{width:38,height:38,borderRadius:19,background:"#34C759",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>
+                📈
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:14,fontWeight:600,color:"#FFF"}}>Investimentos</div>
+                <div style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>Ver detalhes</div>
+              </div>
+              <div style={{fontSize:15,fontWeight:700,color:"#FFF"}}>{totalInvestido===null?"…":formatBRL(totalInvestido)}</div>
             </div>
-          ))}
-          <div onClick={onOpenInvestimentos} className="account-card card-enter" style={{animationDelay:`${(accounts.length+1)*0.06}s`,background:"linear-gradient(135deg,#1D1D1F,#3A3A3C)"}}>
-            <div className="card-icon">📈</div>
-            <div className="card-bank-name" style={{color:"#FFF"}}>Investimentos</div>
-            <div className="card-balance" style={{color:"#FFF"}}>{totalInvestido===null?"…":formatBRL(totalInvestido)}</div>
-            <div className="card-label" style={{color:"rgba(255,255,255,0.7)"}}>Ver detalhes</div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Cash flow chart */}
@@ -2369,6 +2378,7 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const [payingBill, setPayingBill] = useState<BillToPay | null>(null);
   const [payForm, setPayForm] = useState({ data_pagamento:"", motivo_atraso:"", juros:"" });
+  const [selectedCardSlice, setSelectedCardSlice] = useState<number|null>(null);
   const formSheetRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { if (showForm && formSheetRef.current) formSheetRef.current.scrollTop = 0; }, [showForm]);
@@ -2502,6 +2512,37 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
           <div style={{fontSize:14}}>Nenhum cartão cadastrado ainda.<br/>Cadastre e a fatura é calculada automaticamente a partir das compras lançadas.</div>
         </div>
       ) : (
+        <>
+          {(() => {
+            const totalLimite = cards.reduce((s,c) => s + (c.limite ?? 0), 0);
+            const totalFaturaAtual = cards.reduce((s,c) => s + invoiceTotalFor(c.id, monthKey, transactions, c.dia_fechamento ?? 1, linkedFixedBills).total, 0);
+            const cardSegments = buildPieSegments(cards.map(c => ({
+              label: c.nome ?? "Cartão",
+              value: Math.max(invoiceTotalFor(c.id, monthKey, transactions, c.dia_fechamento ?? 1, linkedFixedBills).total, 0.01),
+              color: getCardColor(c.nome ?? ""),
+            })));
+            return (
+              <>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+                  <div style={{background:"linear-gradient(135deg,#1D1D1F,#3A3A3C)",borderRadius:16,padding:16,color:"#FFF"}}>
+                    <div style={{fontSize:11,opacity:0.75,marginBottom:4}}>Limite total ({cards.length} cartõe{cards.length!==1?"s":"s"})</div>
+                    <div style={{fontSize:18,fontWeight:700}}>{totalLimite>0?formatBRL(totalLimite):"—"}</div>
+                  </div>
+                  <div style={{background:"linear-gradient(135deg,#FF3B30,#D32F2F)",borderRadius:16,padding:16,color:"#FFF"}}>
+                    <div style={{fontSize:11,opacity:0.85,marginBottom:4}}>Faturas atuais (total)</div>
+                    <div style={{fontSize:18,fontWeight:700}}>{formatBRL(totalFaturaAtual)}</div>
+                  </div>
+                </div>
+
+                {cards.length > 1 && (
+                  <div style={{display:"flex",justifyContent:"center",marginBottom:20}}>
+                    <DonutChart segments={cardSegments} selected={selectedCardSlice} onSelect={setSelectedCardSlice} total={totalFaturaAtual} />
+                  </div>
+                )}
+              </>
+            );
+          })()}
+
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {cards.map(card => {
             const instance = instanceForCardThisMonth(card.id);
@@ -2569,6 +2610,7 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
             );
           })}
         </div>
+        </>
       )}
 
       {/* Form modal */}
@@ -3492,15 +3534,8 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
                 Minhas <strong style={{fontWeight:700}}>Finanças</strong>
               </span>
             </div>
-            {/* Refresh + User avatar */}
+            {/* User avatar */}
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <div
-                onClick={()=>refetch()}
-                title="Atualizar dados"
-                style={{width:34,height:34,borderRadius:17,background:"#F5F5F7",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:15,flexShrink:0}}
-              >
-                🔄
-              </div>
               <div
                 style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"4px 8px 4px 4px",borderRadius:20,background:"#F5F5F7",transition:"background 0.15s"}}
                 onClick={()=>handleNav("ajustes")}
