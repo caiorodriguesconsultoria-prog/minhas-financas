@@ -44,7 +44,8 @@ Extraia TODOS os lançamentos visíveis e devolva SOMENTE um JSON válido (sem m
       "valor": 123.45,
       "tipo": "despesa", "receita" ou "transferencia",
       "meio_pagamento": "pix", "debito", "credito", "dinheiro" ou "ted_doc" (use "ted_doc" para transferências/TED/DOC, e "debito" para boletos ou débito automático),
-      "categoria_sugerida": "Investimentos" (apenas para movimentações de aplicação/resgate em CDB, fundos, LCI/LCA, "limite garantido" etc — nos demais casos, deixe null)
+      "categoria_sugerida": "Investimentos" (apenas para movimentações de aplicação/resgate em CDB, fundos, LCI/LCA, "limite garantido" etc — nos demais casos, deixe null),
+      "parcelas": 1 (número total de parcelas; se a linha disser "Parcela 3 de 10", use 10 aqui)
     }
   ]
 }
@@ -52,6 +53,8 @@ Extraia TODOS os lançamentos visíveis e devolva SOMENTE um JSON válido (sem m
 Regras importantes:
 - Valores sempre positivos (o campo "tipo" já indica a direção).
 - Se o documento for uma FATURA de cartão de crédito, todos os lançamentos têm meio_pagamento "credito" e tipo "despesa" (a menos que seja estorno/crédito, aí é "receita").
+- MUITO IMPORTANTE — COMPRAS PARCELADAS NA FATURA: se uma linha mostrar "Parcela X de N" (ex: "Parcela 1 de 10"), o valor exibido na fatura é o valor de UMA parcela, não da compra inteira. Nesse caso, devolva em "valor" o VALOR TOTAL da compra (valor da parcela × N) e em "parcelas" o número N. Exemplo: "Parcela 1 de 10 — R$ 281,09" deve virar {"valor": 2810.90, "parcelas": 10}. Isso é necessário para o limite do cartão ser calculado corretamente. Para compras não parceladas (à vista), "parcelas" é sempre 1 e "valor" é o valor mostrado mesmo.
+- PAGAMENTOS/CRÉDITOS NA FATURA: linhas como "Inclusão de Pagamento", "Pagamento efetuado", "Estorno" com valor negativo ou já compensado — essas representam o pagamento da fatura anterior sendo abatido, não uma compra nova. IGNORE essas linhas completamente (não inclua em "transacoes").
 - Se for EXTRATO de conta corrente, identifique cada lançamento pelo tipo real (Pix enviado = despesa/pix, Pix recebido = receita/pix, compra com cartão de débito = despesa/debito, etc).
 - REGRA DE RECEITA — só é "receita" dinheiro que vem de uma pessoa ou empresa DIFERENTE do titular da conta. Se o remetente do Pix/transferência tiver o MESMO NOME do titular (ele mandando pra ele mesmo, entre contas diferentes), classifique como "transferencia", nunca como receita. Na dúvida sobre se é o mesmo titular, prefira "transferencia" a arriscar contar como receita indevida.
 - INVESTIMENTOS COM LIMITE GARANTIDO — linhas como "CDB [banco] LIM.GARANT.", "CDB LIMITE GARANTIDO" ou parecidas representam dinheiro aplicado em CDB que serve de garantia para o limite do cartão de crédito (comum no C6 Bank). São movimentações REAIS (não ignore), mas classifique como "tipo": "transferencia" com "categoria_sugerida": "Investimentos" — não é despesa nem receita, é dinheiro indo para uma aplicação.

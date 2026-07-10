@@ -1928,7 +1928,7 @@ function fileToBase64(file: File): Promise<string> {
 interface ParsedTransacao {
   data: string; descricao: string; valor: number;
   tipo: "despesa"|"receita"|"transferencia"; meio_pagamento: string;
-  categoria_sugerida?: string | null;
+  categoria_sugerida?: string | null; parcelas?: number;
 }
 
 function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImported }: {
@@ -2004,7 +2004,7 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
           tipo_escopo: isTransfer ? "Despesa Familiar" : (match?.tipo_escopo ?? "Despesa Familiar"),
           meio_pagamento: sanitizeMeio(t.meio_pagamento) || "pix",
           account_id: accountId,
-          ...(cartaoId && t.meio_pagamento === "credito" ? { cartao_id: cartaoId, parcela_total: 1 } : {}),
+          ...(cartaoId && t.meio_pagamento === "credito" ? { cartao_id: cartaoId, parcela_total: Math.max(1, t.parcelas ?? 1) } : {}),
         };
       });
 
