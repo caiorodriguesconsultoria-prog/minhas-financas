@@ -1840,6 +1840,40 @@ function EditTransacaoModal({ tx, onClose, onSaved, onDeleted, accounts }: {
 
 // ─── Importar Extrato/Fatura (via IA) ──────────────────────────────────────────
 
+function normalizeDesc(s: string): string {
+  return s.toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Procura, no histórico já lançado, a transação mais parecida com a descrição importada,
+// pra reaproveitar a categoria/escopo que o usuário já usou em compras recorrentes.
+function findBestMatch(importedDesc: string, history: NormTx[]): NormTx | null {
+  const normImported = normalizeDesc(importedDesc);
+  if (!normImported) return null;
+  const importedWords = normImported.split(" ").filter(w => w.length > 2);
+  if (importedWords.length === 0) return null;
+  const importedWordSet = new Set(importedWords);
+
+  let best: NormTx | null = null;
+  let bestScore = 0;
+  for (const h of history) {
+    const normH = normalizeDesc(h.name);
+    if (!normH) continue;
+    if (normH === normImported || normImported.includes(normH) || normH.includes(normImported)) {
+      return h; // match forte (histórico já vem ordenado do mais recente para o mais antigo)
+    }
+    const hWords = new Set(normH.split(" ").filter(w => w.length > 2));
+    let overlap = 0;
+    for (const w of importedWordSet) if (hWords.has(w)) overlap++;
+    const score = overlap / importedWords.length;
+    if (score > bestScore && score >= 0.5) { bestScore = score; best = h; }
+  }
+  return best;
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1857,13 +1891,13 @@ interface ParsedTransacao {
   tipo: "despesa"|"receita"; meio_pagamento: string;
 }
 
-function ImportarDocumentoModal({ userId, accounts, onClose, onImported }: {
-  userId: string; accounts: NormAccount[]; onClose: () => void; onImported: () => void;
+function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImported }: {
+  userId: string; accounts: NormAccount[]; transactions: NormTx[]; onClose: () => void; onImported: () => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<"idle"|"analisando"|"importando"|"done"|"error">("idle");
   const [errorMsg, setErrorMsg] = useState<string|null>(null);
-  const [resumo, setResumo] = useState<{banco:string|null; tipo:string; total:number}|null>(null);
+  const [resumo, setResumo] = useState<{banco:string|null; tipo:string; total:number; reconhecidas:number}|null>(null);
 
   async function handleImport() {
     if (!file) return;
@@ -1900,23 +1934,31 @@ function ImportarDocumentoModal({ userId, accounts, onClose, onImported }: {
         cartaoId = match?.id ?? null;
       }
 
-      const payloads = transacoes.map(t => ({
-        user_id: userId,
-        descricao: t.descricao,
-        valor: t.valor,
-        tipo: t.tipo,
-        data_transacao: t.data,
-        categoria: "Outros",
-        tipo_escopo: "Despesa Familiar",
-        meio_pagamento: t.meio_pagamento || "pix",
-        account_id: accountId,
-        ...(cartaoId && t.meio_pagamento === "credito" ? { cartao_id: cartaoId, parcela_total: 1 } : {}),
-      }));
+      // Histórico ordenado do mais recente pro mais antigo, pra priorizar a classificação mais atual
+      const historicoOrdenado = [...transactions].sort((a,b) => (b.date ?? "").localeCompare(a.date ?? ""));
+      let reconhecidas = 0;
+
+      const payloads = transacoes.map(t => {
+        const match = findBestMatch(t.descricao, historicoOrdenado);
+        if (match) reconhecidas++;
+        return {
+          user_id: userId,
+          descricao: t.descricao,
+          valor: t.valor,
+          tipo: t.tipo,
+          data_transacao: t.data,
+          categoria: match?.category ?? "Outros",
+          tipo_escopo: match?.tipo_escopo ?? "Despesa Familiar",
+          meio_pagamento: t.meio_pagamento || "pix",
+          account_id: accountId,
+          ...(cartaoId && t.meio_pagamento === "credito" ? { cartao_id: cartaoId, parcela_total: 1 } : {}),
+        };
+      });
 
       const { error } = await supabase.from("transactions").insert(payloads);
       if (error) throw new Error(error.message);
 
-      setResumo({ banco: data.banco_detectado, tipo: data.tipo_documento, total: transacoes.length });
+      setResumo({ banco: data.banco_detectado, tipo: data.tipo_documento, total: transacoes.length, reconhecidas });
       setStatus("done");
       onImported();
     } catch (e) {
@@ -1937,7 +1979,9 @@ function ImportarDocumentoModal({ userId, accounts, onClose, onImported }: {
             <div style={{fontSize:16,fontWeight:600,marginBottom:6}}>{resumo.total} lançamento{resumo.total!==1?"s":""} importado{resumo.total!==1?"s":""}!</div>
             <div style={{fontSize:13,color:"#86868B",marginBottom:20}}>
               {resumo.banco ? `Banco identificado: ${resumo.banco}. ` : ""}
-              Revise as categorias em Transações quando puder — importei com categoria "Outros" por padrão.
+              {resumo.reconhecidas > 0
+                ? `${resumo.reconhecidas} de ${resumo.total} já foram classificados automaticamente com base no seu histórico. Revise o restante em Transações.`
+                : `Importei com categoria "Outros" por padrão — revise em Transações quando puder.`}
             </div>
             <button className="btn-primary" onClick={onClose}>Fechar</button>
           </div>
@@ -4366,6 +4410,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           <ImportarDocumentoModal
             userId={user.id}
             accounts={accounts}
+            transactions={transactions}
             onClose={()=>setModal(null)}
             onImported={()=>{ refetch(); showToast("Lançamentos importados!", "success"); }}
           />
