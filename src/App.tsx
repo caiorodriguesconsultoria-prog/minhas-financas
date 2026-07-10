@@ -976,8 +976,10 @@ function HomePage({
   const filteredTxs = txFilter === "todos" ? transactions
     : transactions.filter(t => txFilter === "receita" ? t.type === "income" : t.type === "expense");
 
-  const totalIncome  = transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.value,0);
-  const totalExpense = transactions.filter(t=>t.type==="expense").reduce((s,t)=>s+t.value,0);
+  const currentMonthKey = new Date().toISOString().slice(0,7);
+  const transactionsThisMonth = transactions.filter(t => (t.date ?? "").startsWith(currentMonthKey));
+  const totalIncome  = transactionsThisMonth.filter(t=>t.type==="income").reduce((s,t)=>s+t.value,0);
+  const totalExpense = transactionsThisMonth.filter(t=>t.type==="expense").reduce((s,t)=>s+t.value,0);
   const totalBalance = accounts.reduce((s,a)=>s+a.balance,0);
   const grouped      = groupByMonth(transactions);
   const maxChart     = Math.max(...CHART_DATA_FALLBACK.map(d=>Math.max(d.income,d.expense)));
@@ -4278,8 +4280,10 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
     pullStartY.current = null;
   }
 
-  const totalIncome  = transactions.filter(t=>t.type==="income").reduce((s,t)=>s+t.value,0);
-  const totalExpense = transactions.filter(t=>t.type==="expense").reduce((s,t)=>s+t.value,0);
+  const currentMonthKeyMain = new Date().toISOString().slice(0,7);
+  const transactionsThisMonthMain = transactions.filter(t => (t.date ?? "").startsWith(currentMonthKeyMain));
+  const totalIncome  = transactionsThisMonthMain.filter(t=>t.type==="income").reduce((s,t)=>s+t.value,0);
+  const totalExpense = transactionsThisMonthMain.filter(t=>t.type==="expense").reduce((s,t)=>s+t.value,0);
   const saldo        = totalIncome - totalExpense;
 
   const handleNav = (page: NavPage) => { setNavPage(page); setFabOpen(false); };
@@ -4352,18 +4356,23 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 
         {/* Summary bar (home, general view only) */}
         {navPage === "home" && view === "geral" && (
-          <div className="summary-bar">
-            <div className="summary-item">
-              <div className="summary-label">Receitas</div>
-              <div className="summary-value income">{loading?"…":formatBRL(totalIncome)}</div>
+          <div className="summary-bar" style={{flexDirection:"column",gap:0}}>
+            <div style={{fontSize:10,color:"#8E8E93",textAlign:"center",padding:"6px 0 2px",fontWeight:600,letterSpacing:0.3,textTransform:"uppercase"}}>
+              {MONTH_NAMES[new Date().getMonth()]} {new Date().getFullYear()}
             </div>
-            <div className="summary-item">
-              <div className="summary-label">Despesas</div>
-              <div className="summary-value expense">{loading?"…":formatBRL(totalExpense)}</div>
-            </div>
-            <div className="summary-item">
-              <div className="summary-label">Saldo</div>
-              <div className={`summary-value ${saldo>=0?"income":"expense"}`}>{loading?"…":formatBRL(saldo)}</div>
+            <div style={{display:"flex",width:"100%"}}>
+              <div className="summary-item">
+                <div className="summary-label">Receitas</div>
+                <div className="summary-value income">{loading?"…":formatBRL(totalIncome)}</div>
+              </div>
+              <div className="summary-item">
+                <div className="summary-label">Despesas</div>
+                <div className="summary-value expense">{loading?"…":formatBRL(totalExpense)}</div>
+              </div>
+              <div className="summary-item">
+                <div className="summary-label">Saldo</div>
+                <div className={`summary-value ${saldo>=0?"income":"expense"}`}>{loading?"…":formatBRL(saldo)}</div>
+              </div>
             </div>
           </div>
         )}
