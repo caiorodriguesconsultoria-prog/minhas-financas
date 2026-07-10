@@ -189,7 +189,7 @@ const STYLE = `
   /* Modal */
   .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.42); z-index:300; display:flex; align-items:flex-end; justify-content:center; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); animation:overlayFadeIn 0.2s ease both; }
   @keyframes overlayFadeIn { from { opacity:0; } to { opacity:1; } }
-  .modal-sheet { background:#FFF; border-radius:24px 24px 0 0; padding:24px 20px; padding-bottom:calc(32px + env(safe-area-inset-bottom)); width:100%; max-width:430px; animation:sheetSlideUp 0.32s cubic-bezier(0.32,1,0.64,1) both; will-change:transform; }
+  .modal-sheet { background:#FFF; border-radius:24px 24px 0 0; padding:24px 20px; padding-bottom:calc(32px + env(safe-area-inset-bottom)); width:100%; max-width:430px; max-height:90svh; overflow-y:auto; animation:sheetSlideUp 0.32s cubic-bezier(0.32,1,0.64,1) both; will-change:transform; }
   @keyframes sheetSlideUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
   .modal-handle { width:36px; height:4px; background:#E5E5EA; border-radius:2px; margin:0 auto 20px; }
   .modal-title  { font-size:20px; font-weight:700; margin-bottom:20px; }
@@ -1215,19 +1215,16 @@ function HomePage({
             <div key={month}>
               <div className="tx-group-header">{month}</div>
               {txs.map((tx, i) => {
-                const { icon, bg } = getCategoryStyle(`${tx.category} ${tx.name}`);
+                const { icon } = getCategoryStyle(`${tx.category} ${tx.name}`);
+                const pm = tx.meio_pagamento ? getPaymentStyle(tx.meio_pagamento) : null;
+                const subtitleParts = [tx.category, pm?.label, tx.tipo_escopo].filter(Boolean);
                 return (
                   <div key={tx.id} className="tx-item tx-enter" style={{animationDelay:`${i*0.04}s`}} onClick={()=>onEditTx(tx)}>
-                    <div className="tx-icon" style={{background:bg}}>{icon}</div>
+                    <div className="tx-icon" style={{background:"#F2F2F5"}}>{icon}</div>
                     <div className="tx-info">
                       <div className="tx-name">{tx.name}{tx.anexo_url && <span title="Tem comprovante anexado" style={{marginLeft:6,fontSize:12}}>📎</span>}</div>
-                      <div className="tx-category" style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
-                        <span className={`badge ${tx.type==="income"?"badge-income":"badge-expense"}`}>{tx.category}</span>
-                        {tx.meio_pagamento && (()=>{const pm=getPaymentStyle(tx.meio_pagamento);return pm.label?<span className={`badge ${pm.badgeClass}`}>{pm.label}</span>:null;})()}
-                        {tx.tipo_escopo && (()=>{
-                          const cls = tx.tipo_escopo==="Despesa Familiar"?"badge-escopo-familiar":tx.tipo_escopo==="Lazer Familiar"?"badge-escopo-lazer":tx.tipo_escopo==="Gasto Pessoal"?"badge-escopo-pessoal":tx.tipo_escopo==="Giro de Revenda"?"badge-escopo-revenda":"badge-escopo-familiar";
-                          return <span className={`badge ${cls}`}>{tx.tipo_escopo}</span>;
-                        })()}
+                      <div style={{fontSize:12,color:"#8E8E93",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {subtitleParts.join(" · ")}
                       </div>
                     </div>
                     <div className="tx-right">
@@ -1437,7 +1434,7 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-sheet-center" style={{maxHeight:"92svh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+      <div className="modal-sheet" style={{maxHeight:"92svh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <div className="modal-handle" />
         <div className="modal-title">Nova Transação</div>
 
@@ -1723,7 +1720,7 @@ function EditTransacaoModal({ tx, onClose, onSaved, onDeleted, accounts }: {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-sheet-center" style={{maxHeight:"92svh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+      <div className="modal-sheet" style={{maxHeight:"92svh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <div className="modal-handle" />
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
           <div className="modal-title" style={{margin:0}}>Editar Transação</div>
@@ -4222,7 +4219,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 
         {modal === "extrato" && (
           <div className="modal-overlay" onClick={()=>setModal(null)}>
-            <div className="modal-sheet-center" onClick={e=>e.stopPropagation()}>
+            <div className="modal-sheet" onClick={e=>e.stopPropagation()}>
               <div className="modal-handle" />
               <div className="modal-title">Upload de Extrato</div>
               <div style={{background:"#F5F5F7",borderRadius:16,padding:28,textAlign:"center",marginBottom:20,cursor:"pointer",border:"2px dashed #D1D1D6"}}>
@@ -4246,7 +4243,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 
         {modal === "conta" && (
           <div className="modal-overlay" onClick={()=>setModal(null)}>
-            <div className="modal-sheet-center" onClick={e=>e.stopPropagation()}>
+            <div className="modal-sheet" onClick={e=>e.stopPropagation()}>
               <div className="modal-handle" />
               <div className="modal-title">Nova Conta</div>
               <div className="form-field">
