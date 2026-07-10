@@ -1938,6 +1938,16 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
       const historicoOrdenado = [...transactions].sort((a,b) => (b.date ?? "").localeCompare(a.date ?? ""));
       let reconhecidas = 0;
 
+      // Garante que o meio de pagamento é um dos valores válidos no banco, mesmo se a IA devolver algo diferente
+      const VALID_MEIOS = ["pix","debito","credito","dinheiro","ted_doc"];
+      const sanitizeMeio = (m: string) => {
+        const norm = (m ?? "").toLowerCase().trim();
+        if (VALID_MEIOS.includes(norm)) return norm;
+        if (norm.includes("transfer") || norm === "ted" || norm === "doc") return "ted_doc";
+        if (norm.includes("boleto")) return "debito";
+        return "pix";
+      };
+
       const payloads = transacoes.map(t => {
         const match = findBestMatch(t.descricao, historicoOrdenado);
         if (match) reconhecidas++;
@@ -1949,7 +1959,7 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
           data_transacao: t.data,
           categoria: match?.category ?? "Outros",
           tipo_escopo: match?.tipo_escopo ?? "Despesa Familiar",
-          meio_pagamento: t.meio_pagamento || "pix",
+          meio_pagamento: sanitizeMeio(t.meio_pagamento) || "pix",
           account_id: accountId,
           ...(cartaoId && t.meio_pagamento === "credito" ? { cartao_id: cartaoId, parcela_total: 1 } : {}),
         };

@@ -39,7 +39,7 @@ Extraia TODOS os lançamentos visíveis e devolva SOMENTE um JSON válido (sem m
       "descricao": "nome do estabelecimento ou descrição do lançamento",
       "valor": 123.45,
       "tipo": "despesa" ou "receita",
-      "meio_pagamento": "pix", "debito", "credito", "boleto" ou "transferencia"
+      "meio_pagamento": "pix", "debito", "credito", "dinheiro" ou "ted_doc" (use "ted_doc" para transferências/TED/DOC, e "debito" para boletos ou débito automático)
     }
   ]
 }
@@ -47,7 +47,7 @@ Extraia TODOS os lançamentos visíveis e devolva SOMENTE um JSON válido (sem m
 Regras importantes:
 - Valores sempre positivos (o campo "tipo" já indica se é despesa ou receita).
 - Se o documento for uma FATURA de cartão de crédito, todos os lançamentos têm meio_pagamento "credito" e tipo "despesa" (a menos que seja estorno/crédito, aí é "receita").
-- Se for EXTRATO de conta corrente, identifique cada lançamento pelo tipo real (Pix enviado = despesa/pix, Pix recebido = receita/pix, compra com cartão de débito = despesa/debito, transferência recebida = receita/transferencia, etc).
+- Se for EXTRATO de conta corrente, identifique cada lançamento pelo tipo real (Pix enviado = despesa/pix, Pix recebido = receita/pix, compra com cartão de débito = despesa/debito, transferência recebida = receita/ted_doc, etc).
 - Ignore linhas de saldo, cabeçalhos, totais e "em processamento" sem valor definido.
 - Datas: se o ano não estiver explícito, assuma o ano atual (${new Date().getFullYear()}).
 - Se não conseguir ler nada, devolva "transacoes": [].`;
