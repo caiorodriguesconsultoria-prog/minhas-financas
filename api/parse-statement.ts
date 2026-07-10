@@ -27,28 +27,34 @@ export default async function handler(req: any, res: any) {
 
   const prompt = `Você está analisando um extrato de conta corrente OU uma fatura de cartão de crédito de um banco brasileiro (pode ser print de tela, foto ou PDF).
 
+Primeiro, identifique o NOME DO TITULAR da conta (geralmente aparece no cabeçalho do documento, ex: "CAIO CARVALHAES RODRIGUES").
+
 Extraia TODOS os lançamentos visíveis e devolva SOMENTE um JSON válido (sem markdown, sem texto antes ou depois), no formato exato:
 
 {
   "tipo_documento": "extrato" ou "fatura",
   "banco_detectado": "nome do banco, ex: Nubank, Banco do Brasil, C6 Bank, Bradesco, Santander, Caixa, Inter (ou null se não identificar)",
   "cartao_final": "últimos 4 dígitos do cartão, se for fatura (ou null)",
+  "titular": "nome do titular identificado no documento, ou null",
+  "saldo_final": 1234.56 ou null (o saldo final/saldo do dia mais recente mostrado no documento, se houver — só faz sentido para extrato de conta corrente),
   "transacoes": [
     {
       "data": "YYYY-MM-DD",
       "descricao": "nome do estabelecimento ou descrição do lançamento",
       "valor": 123.45,
-      "tipo": "despesa" ou "receita",
+      "tipo": "despesa", "receita" ou "transferencia",
       "meio_pagamento": "pix", "debito", "credito", "dinheiro" ou "ted_doc" (use "ted_doc" para transferências/TED/DOC, e "debito" para boletos ou débito automático)
     }
   ]
 }
 
 Regras importantes:
-- Valores sempre positivos (o campo "tipo" já indica se é despesa ou receita).
+- Valores sempre positivos (o campo "tipo" já indica a direção).
 - Se o documento for uma FATURA de cartão de crédito, todos os lançamentos têm meio_pagamento "credito" e tipo "despesa" (a menos que seja estorno/crédito, aí é "receita").
-- Se for EXTRATO de conta corrente, identifique cada lançamento pelo tipo real (Pix enviado = despesa/pix, Pix recebido = receita/pix, compra com cartão de débito = despesa/debito, transferência recebida = receita/ted_doc, etc).
-- Ignore linhas de saldo, cabeçalhos, totais e "em processamento" sem valor definido.
+- Se for EXTRATO de conta corrente, identifique cada lançamento pelo tipo real (Pix enviado = despesa/pix, Pix recebido = receita/pix, compra com cartão de débito = despesa/debito, etc).
+- MUITO IMPORTANTE — Transferências entre contas do próprio titular: se um Pix, TED ou transferência foi enviado OU recebido tendo como remetente/destinatário o MESMO NOME do titular da conta (ex: "Pix recebido de CAIO CARVALHAES RODRIGUES" numa conta que também é do CAIO CARVALHAES RODRIGUES), classifique como "tipo": "transferencia" — NÃO como receita nem despesa, já que não é dinheiro novo entrando nem saindo da família, só mudando de conta.
+- Ignore completamente linhas que não são lançamentos reais: saldo do dia, saldo anterior, cabeçalhos, totais, "em processamento" sem valor definido, e também linhas de aplicação automática/rendimento diário tipo "Rende Fácil", "CDB [banco] LIM.GARANT", "Outros gastos" quando na verdade for aplicação automática de sobra de caixa, ou qualquer linha que represente apenas o dinheiro sendo automaticamente investido/resgatado dentro da mesma conta (isso não é um lançamento real, é só o saldo variando).
+- Extraia o "saldo_final": procure a linha de saldo mais recente do extrato (geralmente "Saldo do dia" da última data, ou saldo no topo/rodapé do documento).
 - Datas: se o ano não estiver explícito, assuma o ano atual (${new Date().getFullYear()}).
 - Se não conseguir ler nada, devolva "transacoes": [].`;
 

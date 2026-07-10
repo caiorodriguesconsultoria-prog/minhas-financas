@@ -12,6 +12,7 @@ export interface Transaction {
   meio_pagamento?: string; tipo_escopo?: string; created_at?: string;
   cartao_id?: string | null; parcela_total?: number;
   anexo_url?: string | null; anexo_nome?: string | null;
+  conta_destino_id?: string | null;
 }
 export interface Account {
   id: string; user_id?: string; nome?: string; tipo?: string;
@@ -49,11 +50,12 @@ export interface PlanejamentoMensal {
   renda_mensal: number; investimento_mensal: number; created_at?: string;
 }
 export function normaliseTx(t: Transaction) {
-  const isIncome = t.tipo === "receita" || t.tipo === "income" || t.tipo === "entrada";
+  const isTransfer = t.tipo === "transferencia" || t.tipo === "transfer";
+  const isIncome = !isTransfer && (t.tipo === "receita" || t.tipo === "income" || t.tipo === "entrada");
   return {
     id: t.id, user_id: t.user_id ?? null, account_id: t.account_id ?? null,
     name: t.descricao ?? "Sem descrição", category: t.categoria ?? "Outros",
-    value: t.valor ?? 0, type: isIncome ? "income" : "expense",
+    value: t.valor ?? 0, type: isTransfer ? "transfer" : (isIncome ? "income" : "expense"),
     date: t.data_transacao ?? t.created_at?.slice(0, 10) ?? "",
     beneficiario_real: t.beneficiario_real ?? null,
     meio_pagamento: t.meio_pagamento ?? null,
@@ -62,6 +64,7 @@ export function normaliseTx(t: Transaction) {
     parcela_total: t.parcela_total ?? 1,
     anexo_url: t.anexo_url ?? null,
     anexo_nome: t.anexo_nome ?? null,
+    conta_destino_id: t.conta_destino_id ?? null,
   } as const;
 }
 export function normaliseAccount(a: Account) {

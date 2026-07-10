@@ -1228,8 +1228,8 @@ function HomePage({
                       </div>
                     </div>
                     <div className="tx-right">
-                      <div className={`tx-value ${tx.type==="income"?"income":"expense"}`}>
-                        {tx.type==="income"?"+":"−"}{formatBRL(tx.value)}
+                      <div className={`tx-value ${tx.type==="income"?"income":tx.type==="transfer"?"transfer":"expense"}`} style={tx.type==="transfer"?{color:"#8E8E93"}:undefined}>
+                        {tx.type==="income"?"+":tx.type==="transfer"?"⇄ ":"−"}{formatBRL(tx.value)}
                       </div>
                       <div className="tx-date">{formatDatePT(tx.date)} · {tx.account}</div>
                     </div>
@@ -1246,8 +1246,8 @@ function HomePage({
 
 // ─── Nova Transação modal ─────────────────────────────────────────────────────
 
-interface TxForm { name:string; value:string; category:string; date:string; accountId:string; tipo:"receita"|"despesa"; beneficiario_real:string; meio_pagamento:string; tipo_escopo:string; }
-const EMPTY_FORM: TxForm = { name:"", value:"", category:"", date:"", accountId:"", tipo:"despesa", beneficiario_real:"", meio_pagamento:"Pix", tipo_escopo:"Despesa Familiar" };
+interface TxForm { name:string; value:string; category:string; date:string; accountId:string; tipo:"receita"|"despesa"|"transferencia"; beneficiario_real:string; meio_pagamento:string; tipo_escopo:string; contaDestinoId:string; }
+const EMPTY_FORM: TxForm = { name:"", value:"", category:"", date:"", accountId:"", tipo:"despesa", beneficiario_real:"", meio_pagamento:"Pix", tipo_escopo:"Despesa Familiar", contaDestinoId:"" };
 
 const ESCOPO_OPTIONS = ["Despesa Familiar", "Lazer Familiar", "Gasto Pessoal", "Giro de Revenda"] as const;
 
@@ -1340,6 +1340,10 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
   const noAccounts = accounts.length === 0;
 
   function buildDescricao(): string {
+    if (form.tipo === "transferencia") {
+      const destino = accounts.find(a=>a.id===form.contaDestinoId)?.name ?? "outra conta";
+      return form.name.trim() || `Transferência para ${destino}`;
+    }
     if (form.tipo === "despesa") return form.name.trim();
     switch(incomeType) {
       case "salario":     return "Salário";
@@ -1358,6 +1362,7 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
   }
 
   function buildCategoria(): string {
+    if (form.tipo === "transferencia") return "Transferência";
     if (form.tipo === "despesa") return form.category || "Outros";
     const map: Record<string,string> = {
       salario:"Salário", venda_prod:"Venda de Produto", venda_serv:"Venda de Serviço",
@@ -1372,6 +1377,10 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
     const descricao = buildDescricao();
     if (!descricao || !form.value || !form.date) {
       setErr("Preencha todos os campos obrigatórios antes de salvar.");
+      return;
+    }
+    if (form.tipo === "transferencia" && !form.contaDestinoId) {
+      setErr("Selecione a conta de destino da transferência.");
       return;
     }
     if (noAccounts) { setErr("Nenhuma conta disponível."); return; }
@@ -1406,8 +1415,9 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
       tipo:           form.tipo,
       data_transacao: form.date,
       account_id:     form.accountId || accounts[0]?.id || null,
-      meio_pagamento: PAYMENT_METHODS.find(p=>p.label===form.meio_pagamento)?.dbValue ?? "pix",
-      tipo_escopo:    form.tipo_escopo || (form.tipo==="receita"?"Despesa Familiar":"Despesa Familiar"),
+      meio_pagamento: form.tipo==="transferencia" ? "pix" : (PAYMENT_METHODS.find(p=>p.label===form.meio_pagamento)?.dbValue ?? "pix"),
+      tipo_escopo:    form.tipo==="transferencia" ? "Transferência" : (form.tipo_escopo || "Despesa Familiar"),
+      ...(form.tipo==="transferencia" ? { conta_destino_id: form.contaDestinoId } : {}),
       ...(form.beneficiario_real ? { beneficiario_real: form.beneficiario_real } : {}),
       ...(paraQuem ? { beneficiario_real: paraQuem } : {}),
       ...(minhaParte !== null ? { observacao: `Dividido entre ${pessoas} pessoas. Sua parte: R$${minhaParte.toFixed(2)}` } : {}),
@@ -1444,14 +1454,41 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
           </div>
         )}
 
-        {/* Tipo Despesa/Receita */}
+        {/* Tipo Despesa/Receita/Transferência */}
         <div className="form-field">
           <label className="form-label">Tipo</label>
           <div className="type-toggle">
             <button className={`type-btn${form.tipo==="despesa"?" expense":""}`} onClick={()=>setForm(f=>({...f,tipo:"despesa"}))}>⬇ Despesa</button>
             <button className={`type-btn${form.tipo==="receita"?" income":""}`}  onClick={()=>setForm(f=>({...f,tipo:"receita"}))}>⬆ Receita</button>
+            <button className={`type-btn${form.tipo==="transferencia"?" income":""}`} style={form.tipo==="transferencia"?{background:"#8E8E93",borderColor:"#8E8E93"}:{}} onClick={()=>setForm(f=>({...f,tipo:"transferencia"}))}>⇄ Transferência</button>
           </div>
         </div>
+
+        {/* ── TRANSFERÊNCIA: conta origem/destino ── */}
+        {form.tipo === "transferencia" && (
+          <>
+            <div style={{fontSize:12,color:"#86868B",marginBottom:12,lineHeight:1.5}}>
+              Transferências entre suas próprias contas não contam como receita nem despesa — só movem o dinheiro de um lugar pro outro.
+            </div>
+            <div className="form-field">
+              <label className="form-label">De (conta de origem)</label>
+              <select className="form-input" value={form.accountId} onChange={set("accountId")}>
+                {accounts.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div className="form-field">
+              <label className="form-label">Para (conta de destino)</label>
+              <select className="form-input" value={form.contaDestinoId} onChange={set("contaDestinoId")}>
+                <option value="">Selecione…</option>
+                {accounts.filter(a=>a.id!==form.accountId).map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div className="form-field">
+              <label className="form-label">Descrição (opcional)</label>
+              <input className="form-input" placeholder="Ex: Poupança para conta corrente" value={form.name} onChange={set("name")} />
+            </div>
+          </>
+        )}
 
         {/* ── RECEITA: seletor de tipo ── */}
         {form.tipo === "receita" && (
@@ -1888,7 +1925,7 @@ function fileToBase64(file: File): Promise<string> {
 
 interface ParsedTransacao {
   data: string; descricao: string; valor: number;
-  tipo: "despesa"|"receita"; meio_pagamento: string;
+  tipo: "despesa"|"receita"|"transferencia"; meio_pagamento: string;
 }
 
 function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImported }: {
@@ -1897,7 +1934,7 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<"idle"|"analisando"|"importando"|"done"|"error">("idle");
   const [errorMsg, setErrorMsg] = useState<string|null>(null);
-  const [resumo, setResumo] = useState<{banco:string|null; tipo:string; total:number; reconhecidas:number}|null>(null);
+  const [resumo, setResumo] = useState<{banco:string|null; tipo:string; total:number; reconhecidas:number; saldoAtualizado:number|null}|null>(null);
 
   async function handleImport() {
     if (!file) return;
@@ -1949,7 +1986,8 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
       };
 
       const payloads = transacoes.map(t => {
-        const match = findBestMatch(t.descricao, historicoOrdenado);
+        const isTransfer = t.tipo === "transferencia";
+        const match = !isTransfer ? findBestMatch(t.descricao, historicoOrdenado) : null;
         if (match) reconhecidas++;
         return {
           user_id: userId,
@@ -1957,8 +1995,8 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
           valor: t.valor,
           tipo: t.tipo,
           data_transacao: t.data,
-          categoria: match?.category ?? "Outros",
-          tipo_escopo: match?.tipo_escopo ?? "Despesa Familiar",
+          categoria: isTransfer ? "Transferência" : (match?.category ?? "Outros"),
+          tipo_escopo: isTransfer ? "Transferência" : (match?.tipo_escopo ?? "Despesa Familiar"),
           meio_pagamento: sanitizeMeio(t.meio_pagamento) || "pix",
           account_id: accountId,
           ...(cartaoId && t.meio_pagamento === "credito" ? { cartao_id: cartaoId, parcela_total: 1 } : {}),
@@ -1968,7 +2006,14 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
       const { error } = await supabase.from("transactions").insert(payloads);
       if (error) throw new Error(error.message);
 
-      setResumo({ banco: data.banco_detectado, tipo: data.tipo_documento, total: transacoes.length, reconhecidas });
+      // Se o documento tinha um saldo final legível e achamos a conta correspondente, atualiza o saldo
+      let saldoAtualizado: number | null = null;
+      if (data.saldo_final !== null && data.saldo_final !== undefined && accountId) {
+        const { error: saldoErr } = await supabase.from("accounts").update({ saldo_inicial: data.saldo_final }).eq("id", accountId);
+        if (!saldoErr) saldoAtualizado = data.saldo_final;
+      }
+
+      setResumo({ banco: data.banco_detectado, tipo: data.tipo_documento, total: transacoes.length, reconhecidas, saldoAtualizado });
       setStatus("done");
       onImported();
     } catch (e) {
@@ -1992,6 +2037,9 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
               {resumo.reconhecidas > 0
                 ? `${resumo.reconhecidas} de ${resumo.total} já foram classificados automaticamente com base no seu histórico. Revise o restante em Transações.`
                 : `Importei com categoria "Outros" por padrão — revise em Transações quando puder.`}
+              {resumo.saldoAtualizado !== null && (
+                <><br/><br/>Saldo da conta atualizado para {formatBRL(resumo.saldoAtualizado)}.</>
+              )}
             </div>
             <button className="btn-primary" onClick={onClose}>Fechar</button>
           </div>
