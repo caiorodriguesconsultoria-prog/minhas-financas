@@ -43,7 +43,8 @@ Extraia TODOS os lançamentos visíveis e devolva SOMENTE um JSON válido (sem m
       "descricao": "nome do estabelecimento ou descrição do lançamento",
       "valor": 123.45,
       "tipo": "despesa", "receita" ou "transferencia",
-      "meio_pagamento": "pix", "debito", "credito", "dinheiro" ou "ted_doc" (use "ted_doc" para transferências/TED/DOC, e "debito" para boletos ou débito automático)
+      "meio_pagamento": "pix", "debito", "credito", "dinheiro" ou "ted_doc" (use "ted_doc" para transferências/TED/DOC, e "debito" para boletos ou débito automático),
+      "categoria_sugerida": "Investimentos" (apenas para movimentações de aplicação/resgate em CDB, fundos, LCI/LCA, "limite garantido" etc — nos demais casos, deixe null)
     }
   ]
 }
@@ -52,8 +53,10 @@ Regras importantes:
 - Valores sempre positivos (o campo "tipo" já indica a direção).
 - Se o documento for uma FATURA de cartão de crédito, todos os lançamentos têm meio_pagamento "credito" e tipo "despesa" (a menos que seja estorno/crédito, aí é "receita").
 - Se for EXTRATO de conta corrente, identifique cada lançamento pelo tipo real (Pix enviado = despesa/pix, Pix recebido = receita/pix, compra com cartão de débito = despesa/debito, etc).
-- MUITO IMPORTANTE — Transferências entre contas do próprio titular: se um Pix, TED ou transferência foi enviado OU recebido tendo como remetente/destinatário o MESMO NOME do titular da conta (ex: "Pix recebido de CAIO CARVALHAES RODRIGUES" numa conta que também é do CAIO CARVALHAES RODRIGUES), classifique como "tipo": "transferencia" — NÃO como receita nem despesa, já que não é dinheiro novo entrando nem saindo da família, só mudando de conta.
-- Ignore completamente linhas que não são lançamentos reais: saldo do dia, saldo anterior, cabeçalhos, totais, "em processamento" sem valor definido, e também linhas de aplicação automática/rendimento diário tipo "Rende Fácil", "CDB [banco] LIM.GARANT", "Outros gastos" quando na verdade for aplicação automática de sobra de caixa, ou qualquer linha que represente apenas o dinheiro sendo automaticamente investido/resgatado dentro da mesma conta (isso não é um lançamento real, é só o saldo variando).
+- REGRA DE RECEITA — só é "receita" dinheiro que vem de uma pessoa ou empresa DIFERENTE do titular da conta. Se o remetente do Pix/transferência tiver o MESMO NOME do titular (ele mandando pra ele mesmo, entre contas diferentes), classifique como "transferencia", nunca como receita. Na dúvida sobre se é o mesmo titular, prefira "transferencia" a arriscar contar como receita indevida.
+- INVESTIMENTOS COM LIMITE GARANTIDO — linhas como "CDB [banco] LIM.GARANT.", "CDB LIMITE GARANTIDO" ou parecidas representam dinheiro aplicado em CDB que serve de garantia para o limite do cartão de crédito (comum no C6 Bank). São movimentações REAIS (não ignore), mas classifique como "tipo": "transferencia" com "categoria_sugerida": "Investimentos" — não é despesa nem receita, é dinheiro indo para uma aplicação.
+- "RENDE FÁCIL" (Banco do Brasil) e indicadores semelhantes de saldo remunerado automático (ex: "Poupança automática", "Saldo remunerado") geralmente são apenas EXIBIÇÃO do saldo da conta rendendo, não um lançamento de fato — se não houver um valor de aplicação/resgate claro e específico associado, ignore essa linha (não é um lançamento real).
+- Ignore completamente outras linhas que não são lançamentos reais: saldo do dia, saldo anterior, cabeçalhos, totais, e "em processamento" sem valor definido.
 - Extraia o "saldo_final": procure a linha de saldo mais recente do extrato (geralmente "Saldo do dia" da última data, ou saldo no topo/rodapé do documento).
 - Datas: se o ano não estiver explícito, assuma o ano atual (${new Date().getFullYear()}).
 - Se não conseguir ler nada, devolva "transacoes": [].`;

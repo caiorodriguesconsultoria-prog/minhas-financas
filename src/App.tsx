@@ -1926,6 +1926,7 @@ function fileToBase64(file: File): Promise<string> {
 interface ParsedTransacao {
   data: string; descricao: string; valor: number;
   tipo: "despesa"|"receita"|"transferencia"; meio_pagamento: string;
+  categoria_sugerida?: string | null;
 }
 
 function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImported }: {
@@ -1934,7 +1935,7 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<"idle"|"analisando"|"importando"|"done"|"error">("idle");
   const [errorMsg, setErrorMsg] = useState<string|null>(null);
-  const [resumo, setResumo] = useState<{banco:string|null; tipo:string; total:number; reconhecidas:number; saldoAtualizado:number|null}|null>(null);
+  const [resumo, setResumo] = useState<{banco:string|null; tipo:string; total:number; reconhecidas:number; saldoAtualizado:number|null; cartaoNaoEncontrado:boolean}|null>(null);
 
   async function handleImport() {
     if (!file) return;
@@ -1965,10 +1966,12 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
 
       // Se for fatura, tenta achar o cartão correspondente (pelo banco ou final do cartão)
       let cartaoId: string | null = null;
+      let cartaoNaoEncontrado = false;
       if (data.tipo_documento === "fatura") {
         const { data: cards } = await supabase.from("bills_to_pay").select("id, nome").eq("recorrente", true).not("dia_fechamento", "is", null);
         const match = (cards ?? []).find((c: any) => bancoDetectado && (c.nome ?? "").toLowerCase().includes(bancoDetectado));
         cartaoId = match?.id ?? null;
+        cartaoNaoEncontrado = !cartaoId;
       }
 
       // Histórico ordenado do mais recente pro mais antigo, pra priorizar a classificação mais atual
@@ -1995,7 +1998,7 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
           valor: t.valor,
           tipo: t.tipo,
           data_transacao: t.data,
-          categoria: isTransfer ? "Transferência" : (match?.category ?? "Outros"),
+          categoria: t.categoria_sugerida || (isTransfer ? "Transferência" : (match?.category ?? "Outros")),
           tipo_escopo: isTransfer ? "Transferência" : (match?.tipo_escopo ?? "Despesa Familiar"),
           meio_pagamento: sanitizeMeio(t.meio_pagamento) || "pix",
           account_id: accountId,
@@ -2013,7 +2016,7 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
         if (!saldoErr) saldoAtualizado = data.saldo_final;
       }
 
-      setResumo({ banco: data.banco_detectado, tipo: data.tipo_documento, total: transacoes.length, reconhecidas, saldoAtualizado });
+      setResumo({ banco: data.banco_detectado, tipo: data.tipo_documento, total: transacoes.length, reconhecidas, saldoAtualizado, cartaoNaoEncontrado: data.tipo_documento==="fatura" && cartaoNaoEncontrado });
       setStatus("done");
       onImported();
     } catch (e) {
@@ -2039,6 +2042,9 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
                 : `Importei com categoria "Outros" por padrão — revise em Transações quando puder.`}
               {resumo.saldoAtualizado !== null && (
                 <><br/><br/>Saldo da conta atualizado para {formatBRL(resumo.saldoAtualizado)}.</>
+              )}
+              {resumo.cartaoNaoEncontrado && (
+                <><br/><br/>⚠️ Não encontrei um cartão cadastrado com esse banco em <strong>Cartões</strong> — os lançamentos entraram em Transações, mas não estão contando na fatura de nenhum cartão. Cadastre o cartão e sincronize a fatura pra isso funcionar.</>
               )}
             </div>
             <button className="btn-primary" onClick={onClose}>Fechar</button>
