@@ -1838,6 +1838,151 @@ function EditTransacaoModal({ tx, onClose, onSaved, onDeleted, accounts }: {
 
 // ─── Couple link hook ─────────────────────────────────────────────────────────
 
+// ─── Importar Extrato/Fatura (via IA) ──────────────────────────────────────────
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.split(",")[1] ?? "");
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+interface ParsedTransacao {
+  data: string; descricao: string; valor: number;
+  tipo: "despesa"|"receita"; meio_pagamento: string;
+}
+
+function ImportarDocumentoModal({ userId, accounts, onClose, onImported }: {
+  userId: string; accounts: NormAccount[]; onClose: () => void; onImported: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [status, setStatus] = useState<"idle"|"analisando"|"importando"|"done"|"error">("idle");
+  const [errorMsg, setErrorMsg] = useState<string|null>(null);
+  const [resumo, setResumo] = useState<{banco:string|null; tipo:string; total:number}|null>(null);
+
+  async function handleImport() {
+    if (!file) return;
+    setStatus("analisando"); setErrorMsg(null);
+    try {
+      const fileBase64 = await fileToBase64(file);
+      const res = await fetch("/api/parse-statement", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileBase64, mimeType: file.type }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Erro ao analisar o documento");
+
+      const transacoes: ParsedTransacao[] = data.transacoes ?? [];
+      if (transacoes.length === 0) {
+        setErrorMsg("Não foi possível identificar nenhum lançamento nesse arquivo. Tente uma foto/PDF mais nítido.");
+        setStatus("error");
+        return;
+      }
+
+      setStatus("importando");
+
+      // Tenta casar o banco detectado com uma conta já cadastrada
+      const bancoDetectado = (data.banco_detectado ?? "").toLowerCase();
+      const contaCorrespondente = accounts.find(a => bancoDetectado && a.name.toLowerCase().includes(bancoDetectado));
+      const accountId = contaCorrespondente?.id ?? accounts[0]?.id ?? null;
+
+      // Se for fatura, tenta achar o cartão correspondente (pelo banco ou final do cartão)
+      let cartaoId: string | null = null;
+      if (data.tipo_documento === "fatura") {
+        const { data: cards } = await supabase.from("bills_to_pay").select("id, nome").eq("recorrente", true).not("dia_fechamento", "is", null);
+        const match = (cards ?? []).find((c: any) => bancoDetectado && (c.nome ?? "").toLowerCase().includes(bancoDetectado));
+        cartaoId = match?.id ?? null;
+      }
+
+      const payloads = transacoes.map(t => ({
+        user_id: userId,
+        descricao: t.descricao,
+        valor: t.valor,
+        tipo: t.tipo,
+        data_transacao: t.data,
+        categoria: "Outros",
+        tipo_escopo: "Despesa Familiar",
+        meio_pagamento: t.meio_pagamento || "pix",
+        account_id: accountId,
+        ...(cartaoId && t.meio_pagamento === "credito" ? { cartao_id: cartaoId, parcela_total: 1 } : {}),
+      }));
+
+      const { error } = await supabase.from("transactions").insert(payloads);
+      if (error) throw new Error(error.message);
+
+      setResumo({ banco: data.banco_detectado, tipo: data.tipo_documento, total: transacoes.length });
+      setStatus("done");
+      onImported();
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Erro ao importar");
+      setStatus("error");
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={status==="analisando"||status==="importando" ? undefined : onClose}>
+      <div className="modal-sheet" onClick={e=>e.stopPropagation()}>
+        <div className="modal-handle" />
+        <div className="modal-title">Importar extrato ou fatura</div>
+
+        {status === "done" && resumo ? (
+          <div style={{textAlign:"center",padding:"20px 0"}}>
+            <div style={{fontSize:40,marginBottom:12}}>✅</div>
+            <div style={{fontSize:16,fontWeight:600,marginBottom:6}}>{resumo.total} lançamento{resumo.total!==1?"s":""} importado{resumo.total!==1?"s":""}!</div>
+            <div style={{fontSize:13,color:"#86868B",marginBottom:20}}>
+              {resumo.banco ? `Banco identificado: ${resumo.banco}. ` : ""}
+              Revise as categorias em Transações quando puder — importei com categoria "Outros" por padrão.
+            </div>
+            <button className="btn-primary" onClick={onClose}>Fechar</button>
+          </div>
+        ) : (
+          <>
+            <div style={{fontSize:13,color:"#6E6E73",marginBottom:16,lineHeight:1.5}}>
+              Envie uma foto, print ou PDF do extrato da conta corrente ou da fatura do cartão. A IA identifica os lançamentos automaticamente — depois é só revisar as categorias.
+            </div>
+
+            {status === "idle" || status === "error" ? (
+              <>
+                <label style={{display:"block",background:"#F5F5F7",borderRadius:16,padding:28,textAlign:"center",marginBottom:16,cursor:"pointer",border:"2px dashed #D1D1D6"}}>
+                  <input type="file" accept="image/*,application/pdf" style={{display:"none"}}
+                    onChange={e=>setFile(e.target.files?.[0] ?? null)} />
+                  <div style={{fontSize:40,marginBottom:12}}>{file ? "📎" : "📄"}</div>
+                  <div style={{fontWeight:600,marginBottom:6}}>{file ? file.name : "Escolher arquivo"}</div>
+                  <div style={{fontSize:13,color:"#6E6E73"}}>Foto, print ou PDF do extrato/fatura</div>
+                </label>
+                {errorMsg && (
+                  <div style={{background:"rgba(255,59,48,0.08)",border:"1px solid rgba(255,59,48,0.2)",borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:13,color:"#C9352B"}}>
+                    {errorMsg}
+                  </div>
+                )}
+                <button className="btn-primary" disabled={!file} onClick={handleImport} style={{opacity:file?1:0.5}}>
+                  Analisar e importar
+                </button>
+                <button onClick={onClose} style={{width:"100%",padding:12,marginTop:8,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Cancelar</button>
+              </>
+            ) : (
+              <div style={{textAlign:"center",padding:"30px 0"}}>
+                <div style={{fontSize:32,marginBottom:14}}>🔎</div>
+                <div style={{fontSize:15,fontWeight:600,marginBottom:6}}>
+                  {status === "analisando" ? "Lendo o documento…" : "Importando lançamentos…"}
+                </div>
+                <div style={{fontSize:13,color:"#86868B"}}>Isso pode levar alguns segundos.</div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 function useCoupleLink(userId: string | null) {
   const [couple,  setCouple]  = useState<Couple | null>(null);
   const [cLoading, setCLoading] = useState(true);
@@ -4169,7 +4314,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           <div className="fab-actions">
             {([
               { label:"Nova Conta",     icon:"🏦", bg:"#34C759", action:"conta"     as const },
-              { label:"Upload Extrato", icon:"📄", bg:"#FF9500", action:"extrato"   as const },
+              { label:"Importar Extrato/Fatura", icon:"📄", bg:"#FF9500", action:"extrato"   as const },
               { label:"Nova Transação", icon:"💸", bg:"#007AFF", action:"transacao" as const },
             ]).map(item=>(
               <div key={item.label} className={`fab-action${fabOpen?" visible":""}`}>
@@ -4218,27 +4363,12 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
         )}
 
         {modal === "extrato" && (
-          <div className="modal-overlay" onClick={()=>setModal(null)}>
-            <div className="modal-sheet" onClick={e=>e.stopPropagation()}>
-              <div className="modal-handle" />
-              <div className="modal-title">Upload de Extrato</div>
-              <div style={{background:"#F5F5F7",borderRadius:16,padding:28,textAlign:"center",marginBottom:20,cursor:"pointer",border:"2px dashed #D1D1D6"}}>
-                <div style={{fontSize:40,marginBottom:12}}>📄</div>
-                <div style={{fontWeight:600,marginBottom:6}}>Arraste seu extrato aqui</div>
-                <div style={{fontSize:13,color:"#6E6E73"}}>Suporta OFX, CSV e PDF</div>
-                <div style={{marginTop:14,display:"inline-block",padding:"8px 20px",background:"#007AFF",color:"#FFF",borderRadius:20,fontSize:14,fontWeight:600}}>Escolher Arquivo</div>
-              </div>
-              <div className="form-field">
-                <label className="form-label">Conta de Destino</label>
-                <select className="form-input">
-                  {accounts.length > 0
-                    ? accounts.map(a=><option key={a.id}>{a.name}</option>)
-                    : <option>Nubank</option>}
-                </select>
-              </div>
-              <button className="btn-primary" onClick={()=>setModal(null)}>Importar Extrato</button>
-            </div>
-          </div>
+          <ImportarDocumentoModal
+            userId={user.id}
+            accounts={accounts}
+            onClose={()=>setModal(null)}
+            onImported={()=>{ refetch(); showToast("Lançamentos importados!", "success"); }}
+          />
         )}
 
         {modal === "conta" && (
