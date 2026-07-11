@@ -1167,36 +1167,8 @@ function HomePage({
         </div>
       </div>
 
-      {/* Bills to pay */}
-      {bills.filter(b=>!!b.data_vencimento).length > 0 && (
-        <div style={{marginTop:4}}>
-          <div className="section-header">
-            <span className="section-title">Contas a Pagar</span>
-            <span className="section-link">{bills.filter(b=>!!b.data_vencimento && (b.status??"").toLowerCase()!=="pago").length} pendente{bills.filter(b=>!!b.data_vencimento && (b.status??"").toLowerCase()!=="pago").length!==1?"s":""}</span>
-          </div>
-          {bills.filter(b=>!!b.data_vencimento).slice(0,5).map(b=>{
-            const paid    = (b.status ?? "").toLowerCase() === "pago";
-            const name    = b.nome ?? "Conta";
-            const dueDate = b.data_vencimento ?? "";
-            return (
-              <div key={b.id} className="bill-item">
-                <div>
-                  <div className="bill-name" style={{color:paid?"#6E6E73":"#1D1D1F"}}>{name}</div>
-                  <div className="bill-date">{dueDate ? formatDatePT(dueDate) : ""}</div>
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div className={paid?"bill-paid":"bill-amount"} style={{fontSize:12,fontWeight:600}}>
-                    {paid?"✓ Pago":`📅 ${b.status ?? "Pendente"}`}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
       {/* Transactions */}
-      <div style={{marginTop:bills.filter(b=>!!b.data_vencimento).length>0?20:4}}>
+      <div style={{marginTop:20}}>
         <div className="section-header">
           <span className="section-title">Transações</span>
           <span className="section-link" onClick={()=>setShowFilter(f=>!f)}>Filtrar</span>
@@ -1250,6 +1222,29 @@ function HomePage({
 
 interface TxForm { name:string; value:string; category:string; date:string; accountId:string; tipo:"receita"|"despesa"|"transferencia"; beneficiario_real:string; meio_pagamento:string; tipo_escopo:string; contaDestinoId:string; }
 const EMPTY_FORM: TxForm = { name:"", value:"", category:"", date:"", accountId:"", tipo:"despesa", beneficiario_real:"", meio_pagamento:"Pix", tipo_escopo:"Despesa Familiar", contaDestinoId:"" };
+
+// Ajusta o saldo de uma conta somando/subtraindo um valor (usado ao criar/editar/excluir transações,
+// pra manter o saldo da conta sempre refletindo os lançamentos automaticamente).
+async function adjustAccountBalance(accountId: string | null | undefined, delta: number) {
+  if (!accountId || delta === 0) return;
+  const { data } = await supabase.from("accounts").select("saldo_inicial").eq("id", accountId).single();
+  const atual = data?.saldo_inicial ?? 0;
+  await supabase.from("accounts").update({ saldo_inicial: atual + delta }).eq("id", accountId);
+}
+
+// Calcula o efeito (delta) de uma transação sobre a conta de origem e, se for transferência, sobre a de destino.
+function txBalanceEffects(tipo: string, valor: number, accountId: string | null | undefined, contaDestinoId?: string | null) {
+  const effects: { accountId: string | null | undefined; delta: number }[] = [];
+  if (tipo === "receita" || tipo === "income") {
+    effects.push({ accountId, delta: valor });
+  } else if (tipo === "transferencia" || tipo === "transfer") {
+    effects.push({ accountId, delta: -valor });
+    if (contaDestinoId) effects.push({ accountId: contaDestinoId, delta: valor });
+  } else {
+    effects.push({ accountId, delta: -valor });
+  }
+  return effects;
+}
 
 const ESCOPO_OPTIONS = ["Despesa Familiar", "Lazer Familiar", "Gasto Pessoal", "Giro de Revenda"] as const;
 
@@ -1432,6 +1427,11 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
     if (error) {
       setErr(error.code==="42501" ? "Sem permissão. Verifique as políticas RLS." : `Erro: ${error.message}`);
       return;
+    }
+    // Compras no cartão de crédito não saem da conta na hora (viram fatura) — só ajusta saldo pra Pix/débito/dinheiro/TED e transferências
+    if (!isCredito) {
+      const effects = txBalanceEffects(form.tipo, valorTotal, form.accountId, form.contaDestinoId);
+      for (const e of effects) await adjustAccountBalance(e.accountId, e.delta);
     }
     onSaved(); onClose();
   }
@@ -1745,6 +1745,19 @@ function EditTransacaoModal({ tx, onClose, onSaved, onDeleted, accounts }: {
     }).eq("id", tx.id);
     setSaving(false);
     if (error) { setErr(`Erro ao salvar: ${error.message}`); return; }
+
+    // Reverte o efeito antigo no saldo e aplica o novo (pulando compras no cartão, que não mexem no saldo da conta)
+    const oldEraCredito = tx.meio_pagamento === "credito";
+    if (!oldEraCredito) {
+      const oldEffects = txBalanceEffects(tx.type, tx.value, tx.account_id, tx.conta_destino_id);
+      for (const e of oldEffects) await adjustAccountBalance(e.accountId, -e.delta);
+    }
+    const novoEhCredito = (PAYMENT_METHODS.find(p=>p.label===meioPag)?.dbValue) === "credito";
+    if (!novoEhCredito) {
+      const newEffects = txBalanceEffects(tipo, parseFloat(valor), accountId, null);
+      for (const e of newEffects) await adjustAccountBalance(e.accountId, e.delta);
+    }
+
     onSaved(); onClose();
   }
 
@@ -1754,6 +1767,13 @@ function EditTransacaoModal({ tx, onClose, onSaved, onDeleted, accounts }: {
     const { error } = await supabase.from("transactions").delete().eq("id", tx.id);
     setDeleting(false);
     if (error) { setErr(`Erro ao excluir: ${error.message}`); return; }
+
+    // Desfaz o efeito da transação excluída no saldo da conta (se não era compra no cartão)
+    if (tx.meio_pagamento !== "credito") {
+      const effects = txBalanceEffects(tx.type, tx.value, tx.account_id, tx.conta_destino_id);
+      for (const e of effects) await adjustAccountBalance(e.accountId, -e.delta);
+    }
+
     onDeleted(); onClose();
   }
 
@@ -2867,7 +2887,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
 
 // ─── Cartões page ─────────────────────────────────────────────────────────────
 
-function CartoesPage({ userId, transactions }: { userId: string; transactions: NormTx[] }) {
+function CartoesPage({ userId, transactions, accounts, onImported }: { userId: string; transactions: NormTx[]; accounts: NormAccount[]; onImported: () => void }) {
   const [all, setAll] = useState<BillToPay[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -2878,6 +2898,7 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const [payingBill, setPayingBill] = useState<BillToPay | null>(null);
   const [payForm, setPayForm] = useState({ data_pagamento:"", motivo_atraso:"", juros:"" });
+  const [showImportFatura, setShowImportFatura] = useState(false);
   const [selectedCardSlice, setSelectedCardSlice] = useState<number|null>(null);
   const formSheetRef = useRef<HTMLDivElement>(null);
 
@@ -3203,6 +3224,25 @@ function CartoesPage({ userId, transactions }: { userId: string; transactions: N
           {toast.msg}
         </div>,
         document.body
+      )}
+
+      {/* Botão flutuante — lançar fatura direto nessa aba */}
+      <div
+        onClick={()=>setShowImportFatura(true)}
+        title="Importar fatura"
+        style={{position:"fixed",bottom:90,right:20,width:56,height:56,borderRadius:28,background:"#FF3B30",color:"#FFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:300,cursor:"pointer",boxShadow:"0 4px 14px rgba(255,59,48,0.4)",zIndex:90}}
+      >
+        +
+      </div>
+
+      {showImportFatura && (
+        <ImportarDocumentoModal
+          userId={userId}
+          accounts={accounts}
+          transactions={transactions}
+          onClose={()=>setShowImportFatura(false)}
+          onImported={()=>{ setShowImportFatura(false); onImported(); load(); }}
+        />
       )}
     </div>
   );
@@ -3870,6 +3910,15 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
         </div>,
         document.body
       )}
+
+      {/* Botão flutuante — lançar investimento direto nessa aba */}
+      <div
+        onClick={()=>{setEditing(null);setForm({nome:"",tipo:TIPOS_INVESTIMENTO[0],valor_inicial:"",instituicao:"",instituicaoOutro:""});setShowForm(true);}}
+        title="Novo investimento"
+        style={{position:"fixed",bottom:90,right:20,width:56,height:56,borderRadius:28,background:"#34C759",color:"#FFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:300,cursor:"pointer",boxShadow:"0 4px 14px rgba(52,199,89,0.4)",zIndex:90}}
+      >
+        +
+      </div>
     </div>
   );
 }
@@ -4404,7 +4453,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           <ContasFixasPage key="fixas" userId={user.id} transactions={transactions} onOpenCartoes={()=>handleNav("cartoes")} />
         )}
         {navPage === "cartoes" && (
-          <CartoesPage key="cartoes" userId={user.id} transactions={transactions} />
+          <CartoesPage key="cartoes" userId={user.id} transactions={transactions} accounts={accounts} onImported={refetch} />
         )}
         {navPage === "planejamento" && (
           <PlanejamentoPage key="planejamento" userId={user.id} transactions={transactions} />
