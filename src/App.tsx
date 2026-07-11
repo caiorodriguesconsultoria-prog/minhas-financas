@@ -1225,11 +1225,14 @@ const EMPTY_FORM: TxForm = { name:"", value:"", category:"", date:"", accountId:
 
 // Ajusta o saldo de uma conta somando/subtraindo um valor (usado ao criar/editar/excluir transações,
 // pra manter o saldo da conta sempre refletindo os lançamentos automaticamente).
-async function adjustAccountBalance(accountId: string | null | undefined, delta: number) {
-  if (!accountId || delta === 0) return;
-  const { data } = await supabase.from("accounts").select("saldo_inicial").eq("id", accountId).single();
+async function adjustAccountBalance(accountId: string | null | undefined, delta: number): Promise<string | null> {
+  if (!accountId || delta === 0) return null;
+  const { data, error: selErr } = await supabase.from("accounts").select("saldo_inicial").eq("id", accountId).single();
+  if (selErr) { console.error("Erro ao ler saldo da conta:", selErr); return selErr.message; }
   const atual = data?.saldo_inicial ?? 0;
-  await supabase.from("accounts").update({ saldo_inicial: atual + delta }).eq("id", accountId);
+  const { error: updErr } = await supabase.from("accounts").update({ saldo_inicial: atual + delta }).eq("id", accountId);
+  if (updErr) { console.error("Erro ao atualizar saldo da conta:", updErr); return updErr.message; }
+  return null;
 }
 
 // Calcula o efeito (delta) de uma transação sobre a conta de origem e, se for transferência, sobre a de destino.
@@ -1404,6 +1407,7 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
     }
 
     const isCredito = form.meio_pagamento === "Crédito";
+    const resolvedAccountId = form.accountId || accounts[0]?.id || null;
     const payload: Record<string,unknown> = {
       user_id:        userId,
       descricao,
@@ -1411,7 +1415,7 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
       valor:          valorTotal,
       tipo:           form.tipo,
       data_transacao: form.date,
-      account_id:     form.accountId || accounts[0]?.id || null,
+      account_id:     resolvedAccountId,
       meio_pagamento: form.tipo==="transferencia" ? "pix" : (PAYMENT_METHODS.find(p=>p.label===form.meio_pagamento)?.dbValue ?? "pix"),
       tipo_escopo:    form.tipo==="transferencia" ? "Despesa Familiar" : (form.tipo_escopo || "Despesa Familiar"),
       ...(form.tipo==="transferencia" ? { conta_destino_id: form.contaDestinoId } : {}),
@@ -1430,8 +1434,11 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
     }
     // Compras no cartão de crédito não saem da conta na hora (viram fatura) — só ajusta saldo pra Pix/débito/dinheiro/TED e transferências
     if (!isCredito) {
-      const effects = txBalanceEffects(form.tipo, valorTotal, form.accountId, form.contaDestinoId);
-      for (const e of effects) await adjustAccountBalance(e.accountId, e.delta);
+      const effects = txBalanceEffects(form.tipo, valorTotal, resolvedAccountId, form.contaDestinoId);
+      for (const e of effects) {
+        const errMsg = await adjustAccountBalance(e.accountId, e.delta);
+        if (errMsg) { setErr(`Transação salva, mas o saldo não atualizou: ${errMsg}`); return; }
+      }
     }
     onSaved(); onClose();
   }
