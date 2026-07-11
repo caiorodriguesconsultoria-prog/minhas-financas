@@ -3239,7 +3239,7 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
       <div
         onClick={()=>setShowImportFatura(true)}
         title="Importar fatura"
-        style={{position:"fixed",top:"50%",right:8,transform:"translateY(-50%)",width:48,height:48,borderRadius:24,background:"#FF3B30",color:"#FFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:300,cursor:"pointer",boxShadow:"0 4px 14px rgba(255,59,48,0.4)",zIndex:90}}
+        style={{position:"fixed",bottom:"calc(90px + env(safe-area-inset-bottom))",right:16,width:48,height:48,borderRadius:24,background:"#FF3B30",color:"#FFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:300,cursor:"pointer",boxShadow:"0 4px 14px rgba(255,59,48,0.4)",zIndex:90}}
       >
         +
       </div>
@@ -3931,7 +3931,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
       <div
         onClick={()=>{setEditing(null);setForm({nome:"",tipo:TIPOS_INVESTIMENTO[0],valor_inicial:"",instituicao:"",instituicaoOutro:"",dataAplicacao:new Date().toISOString().slice(0,10)});setShowForm(true);}}
         title="Novo investimento"
-        style={{position:"fixed",top:"50%",right:8,transform:"translateY(-50%)",width:48,height:48,borderRadius:24,background:"#34C759",color:"#FFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:300,cursor:"pointer",boxShadow:"0 4px 14px rgba(52,199,89,0.4)",zIndex:90}}
+        style={{position:"fixed",bottom:"calc(90px + env(safe-area-inset-bottom))",right:16,width:48,height:48,borderRadius:24,background:"#34C759",color:"#FFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:300,cursor:"pointer",boxShadow:"0 4px 14px rgba(52,199,89,0.4)",zIndex:90}}
       >
         +
       </div>
