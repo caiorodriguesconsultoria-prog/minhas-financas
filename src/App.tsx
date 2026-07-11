@@ -2902,7 +2902,7 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<BillToPay | null>(null);
   const [historyFor, setHistoryFor] = useState<BillToPay | null>(null);
-  const [form, setForm] = useState({ nome:"", dia_fechamento:"", dia_vencimento:"", limite:"" });
+  const [form, setForm] = useState({ nome:"", dia_fechamento:"", dia_vencimento:"" });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const [payingBill, setPayingBill] = useState<BillToPay | null>(null);
@@ -2947,7 +2947,6 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
       categoria: "Cartão de Crédito",
       dia_fechamento: parseInt(form.dia_fechamento,10),
       dia_vencimento: parseInt(form.dia_vencimento,10),
-      limite: form.limite ? parseFloat(form.limite.replace(",",".")) : null,
       valor_base: 0,
       recorrente: true,
       user_id: userId,
@@ -2960,7 +2959,7 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
     if (error) { setToast({msg:`Erro: ${error.message}`,type:"error"}); return; }
     setToast({msg: editing ? "Cartão atualizado" : "Cartão criado", type:"success"});
     setShowForm(false); setEditing(null);
-    setForm({ nome:"", dia_fechamento:"", dia_vencimento:"", limite:"" });
+    setForm({ nome:"", dia_fechamento:"", dia_vencimento:"" });
     load();
   }
 
@@ -3031,7 +3030,7 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
     <div className="scroll-content page-fade">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <div className="section-title" style={{margin:0}}>Cartões</div>
-        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",dia_fechamento:"",dia_vencimento:"",limite:""});setShowForm(true);}}>+ Novo cartão</span>
+        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",dia_fechamento:"",dia_vencimento:""});setShowForm(true);}}>+ Novo cartão</span>
       </div>
 
       {loading ? (
@@ -3044,7 +3043,6 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
       ) : (
         <>
           {(() => {
-            const totalLimite = cards.reduce((s,c) => s + (c.limite ?? 0), 0);
             const totalFaturaAtual = cards.reduce((s,c) => s + invoiceTotalFor(c.id, monthKey, transactions, c.dia_fechamento ?? 1, linkedFixedBills).total, 0);
             const cardSegments = buildPieSegments(cards.map(c => ({
               label: c.nome ?? "Cartão",
@@ -3053,15 +3051,9 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
             })));
             return (
               <>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-                  <div style={{background:"linear-gradient(135deg,#1D1D1F,#3A3A3C)",borderRadius:16,padding:16,color:"#FFF"}}>
-                    <div style={{fontSize:11,opacity:0.75,marginBottom:4}}>Limite total ({cards.length} cartõe{cards.length!==1?"s":"s"})</div>
-                    <div style={{fontSize:18,fontWeight:700}}>{totalLimite>0?formatBRL(totalLimite):"—"}</div>
-                  </div>
-                  <div style={{background:"linear-gradient(135deg,#FF3B30,#D32F2F)",borderRadius:16,padding:16,color:"#FFF"}}>
-                    <div style={{fontSize:11,opacity:0.85,marginBottom:4}}>Faturas atuais (total)</div>
-                    <div style={{fontSize:18,fontWeight:700}}>{formatBRL(totalFaturaAtual)}</div>
-                  </div>
+                <div style={{background:"linear-gradient(135deg,#FF3B30,#D32F2F)",borderRadius:16,padding:16,color:"#FFF",marginBottom:16}}>
+                  <div style={{fontSize:11,opacity:0.85,marginBottom:4}}>Gasto total no cartão este mês ({cards.length} cartõe{cards.length!==1?"s":"s"})</div>
+                  <div style={{fontSize:22,fontWeight:700}}>{formatBRL(totalFaturaAtual)}</div>
                 </div>
 
                 {cards.length > 1 && (
@@ -3080,7 +3072,6 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
             const currentInvoice = invoiceTotalFor(card.id, monthKey, transactions, card.dia_fechamento!, linkedFixedBills);
             const nextKey = addMonthsToKey(monthKey, 1);
             const nextInvoice = invoiceTotalFor(card.id, nextKey, transactions, card.dia_fechamento!, linkedFixedBills);
-            const usoLimite = card.limite ? (currentInvoice.total / card.limite) * 100 : null;
             const daysToClose = (() => {
               const today = new Date();
               let close = new Date(today.getFullYear(), today.getMonth(), card.dia_fechamento!);
@@ -3095,7 +3086,7 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
                     <div style={{fontSize:12,color:"#86868B",marginTop:2}}>Fecha dia {card.dia_fechamento} · vence dia {card.dia_vencimento} · fecha em {daysToClose} dia{daysToClose!==1?"s":""}</div>
                   </div>
                   <div style={{display:"flex",gap:6}}>
-                    <span onClick={()=>{setEditing(card);setForm({nome:card.nome??"",dia_fechamento:String(card.dia_fechamento??""),dia_vencimento:String(card.dia_vencimento??""),limite:String(card.limite??"")});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
+                    <span onClick={()=>{setEditing(card);setForm({nome:card.nome??"",dia_fechamento:String(card.dia_fechamento??""),dia_vencimento:String(card.dia_vencimento??"")});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
                     <span onClick={()=>deleteCard(card)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
                   </div>
                 </div>
@@ -3114,14 +3105,6 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
                     <span style={{fontSize:12,color:"#86868B"}}>Próxima fatura ({monthKeyLabel(nextKey)})</span>
                     <span style={{fontSize:13,fontWeight:600,color:"#86868B"}}>{formatBRL(nextInvoice.total)}</span>
                   </div>
-                  {usoLimite !== null && (
-                    <div style={{marginBottom:10}}>
-                      <div style={{height:6,background:"#E5E5E7",borderRadius:3,overflow:"hidden"}}>
-                        <div style={{height:"100%",width:`${Math.min(100,usoLimite)}%`,background:usoLimite>90?"#FF3B30":usoLimite>70?"#FF9500":"#34C759"}} />
-                      </div>
-                      <div style={{fontSize:11,color:"#86868B",marginTop:4}}>{usoLimite.toFixed(0)}% do limite ({formatBRL(card.limite!)}) usado nesta fatura</div>
-                    </div>
-                  )}
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <button onClick={()=>syncCardInvoice(card, monthKey)} style={{flex:1,padding:"9px",background:"#007AFF",color:"#FFF",border:"none",borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
                       Sincronizar fatura
@@ -3162,8 +3145,6 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
                   style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit"}} />
               </div>
             </div>
-            <input placeholder="Limite do cartão (opcional, R$)" value={form.limite} onChange={e=>setForm(f=>({...f,limite:e.target.value}))}
-              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
             <div style={{fontSize:12,color:"#86868B",marginBottom:16,lineHeight:1.5}}>
               O valor da fatura é calculado automaticamente a partir das compras lançadas com este cartão — você não precisa digitar manualmente.
             </div>
