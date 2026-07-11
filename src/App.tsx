@@ -3239,7 +3239,7 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
       <div
         onClick={()=>setShowImportFatura(true)}
         title="Importar fatura"
-        style={{position:"fixed",bottom:90,right:20,width:56,height:56,borderRadius:28,background:"#FF3B30",color:"#FFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:300,cursor:"pointer",boxShadow:"0 4px 14px rgba(255,59,48,0.4)",zIndex:90}}
+        style={{position:"fixed",top:"50%",right:8,transform:"translateY(-50%)",width:48,height:48,borderRadius:24,background:"#FF3B30",color:"#FFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:300,cursor:"pointer",boxShadow:"0 4px 14px rgba(255,59,48,0.4)",zIndex:90}}
       >
         +
       </div>
@@ -3671,7 +3671,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Investimento | null>(null);
-  const [form, setForm] = useState({ nome:"", tipo:TIPOS_INVESTIMENTO[0], valor_inicial:"", instituicao:"", instituicaoOutro:"" });
+  const [form, setForm] = useState({ nome:"", tipo:TIPOS_INVESTIMENTO[0], valor_inicial:"", instituicao:"", instituicaoOutro:"", dataAplicacao: new Date().toISOString().slice(0,10) });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const [detailFor, setDetailFor] = useState<Investimento | null>(null);
@@ -3709,6 +3709,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
       nome: form.nome.trim(), tipo: form.tipo,
       valor_inicial: form.valor_inicial ? parseFloat(form.valor_inicial.replace(",",".")) : 0,
       instituicao: (form.instituicao === "Outro" ? form.instituicaoOutro.trim() : form.instituicao) || null,
+      data_aplicacao: form.dataAplicacao || null,
       user_id: userId,
     };
     const { error } = editing
@@ -3718,7 +3719,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
     if (error) { setToast({msg:`Erro: ${error.message}`,type:"error"}); return; }
     setToast({msg: editing ? "Investimento atualizado" : "Investimento criado", type:"success"});
     setShowForm(false); setEditing(null);
-    setForm({ nome:"", tipo:TIPOS_INVESTIMENTO[0], valor_inicial:"", instituicao:"" });
+    setForm({ nome:"", tipo:TIPOS_INVESTIMENTO[0], valor_inicial:"", instituicao:"", instituicaoOutro:"", dataAplicacao:new Date().toISOString().slice(0,10) });
     load();
   }
 
@@ -3808,10 +3809,13 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                   <div>
                     <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>{inv.nome}</div>
-                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>{inv.tipo}{inv.instituicao?` · ${inv.instituicao}`:""} · aplicado {formatBRL(inv.valor_inicial??0)}</div>
+                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>
+                      {inv.tipo}{inv.instituicao?` · ${inv.instituicao}`:""} · aplicado {formatBRL(inv.valor_inicial??0)}
+                      {(inv as any).data_aplicacao ? ` · ${new Date((inv as any).data_aplicacao+"T00:00:00").toLocaleDateString("pt-BR")}` : ""}
+                    </div>
                   </div>
                   <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
-                    <span onClick={()=>{setEditing(inv);const matches=accounts.some(a=>a.name===inv.instituicao);setForm({nome:inv.nome,tipo:inv.tipo??TIPOS_INVESTIMENTO[0],valor_inicial:String(inv.valor_inicial??""),instituicao:matches?(inv.instituicao??""):(inv.instituicao?"Outro":""),instituicaoOutro:matches?"":(inv.instituicao??"")});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
+                    <span onClick={()=>{setEditing(inv);const matches=accounts.some(a=>a.name===inv.instituicao);setForm({nome:inv.nome,tipo:inv.tipo??TIPOS_INVESTIMENTO[0],valor_inicial:String(inv.valor_inicial??""),instituicao:matches?(inv.instituicao??""):(inv.instituicao?"Outro":""),instituicaoOutro:matches?"":(inv.instituicao??""),dataAplicacao:(inv as any).data_aplicacao??new Date().toISOString().slice(0,10)});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
                     <span onClick={()=>deleteInvestimento(inv)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
                   </div>
                 </div>
@@ -3848,6 +3852,9 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
                 style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
             )}
             <input placeholder="Valor investido inicialmente (R$)" value={form.valor_inicial} onChange={e=>setForm(f=>({...f,valor_inicial:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+            <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Data da aplicação</label>
+            <input type="date" value={form.dataAplicacao} onChange={e=>setForm(f=>({...f,dataAplicacao:e.target.value}))}
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:16,fontFamily:"inherit"}} />
             <button disabled={saving} onClick={saveInvestimento} style={{width:"100%",padding:14,background:"#007AFF",color:"#FFF",border:"none",borderRadius:14,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:saving?0.6:1}}>
               {saving?"Salvando…":"Salvar"}
@@ -3922,9 +3929,9 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
 
       {/* Botão flutuante — lançar investimento direto nessa aba */}
       <div
-        onClick={()=>{setEditing(null);setForm({nome:"",tipo:TIPOS_INVESTIMENTO[0],valor_inicial:"",instituicao:"",instituicaoOutro:""});setShowForm(true);}}
+        onClick={()=>{setEditing(null);setForm({nome:"",tipo:TIPOS_INVESTIMENTO[0],valor_inicial:"",instituicao:"",instituicaoOutro:"",dataAplicacao:new Date().toISOString().slice(0,10)});setShowForm(true);}}
         title="Novo investimento"
-        style={{position:"fixed",bottom:90,right:20,width:56,height:56,borderRadius:28,background:"#34C759",color:"#FFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:300,cursor:"pointer",boxShadow:"0 4px 14px rgba(52,199,89,0.4)",zIndex:90}}
+        style={{position:"fixed",top:"50%",right:8,transform:"translateY(-50%)",width:48,height:48,borderRadius:24,background:"#34C759",color:"#FFF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:300,cursor:"pointer",boxShadow:"0 4px 14px rgba(52,199,89,0.4)",zIndex:90}}
       >
         +
       </div>
@@ -4482,26 +4489,30 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
         </nav>
 
         {/* FAB overlay */}
-        <div className={`fab-overlay${fabOpen?" open":""}`} onClick={()=>setFabOpen(false)} />
+        {!(navPage==="cartoes" || (navPage==="home" && view==="esposa")) && (
+          <div className={`fab-overlay${fabOpen?" open":""}`} onClick={()=>setFabOpen(false)} />
+        )}
 
         {/* FAB */}
-        <div className="fab-container">
-          <div className="fab-actions">
-            {([
-              { label:"Nova Conta",     icon:"🏦", bg:"#34C759", action:"conta"     as const },
-              { label:"Importar Extrato/Fatura", icon:"📄", bg:"#FF9500", action:"extrato"   as const },
-              { label:"Nova Transação", icon:"💸", bg:"#007AFF", action:"transacao" as const },
-            ]).map(item=>(
-              <div key={item.label} className={`fab-action${fabOpen?" visible":""}`}>
-                <span className="fab-action-label" onClick={()=>{setModal(item.action);setFabOpen(false);}}>{item.label}</span>
-                <button className="fab-action-btn" style={{background:item.bg,color:"#FFF"}} onClick={()=>{setModal(item.action);setFabOpen(false);}}>
-                  {item.icon}
-                </button>
-              </div>
-            ))}
+        {!(navPage==="cartoes" || (navPage==="home" && view==="esposa")) && (
+          <div className="fab-container">
+            <div className="fab-actions">
+              {([
+                { label:"Nova Conta",     icon:"🏦", bg:"#34C759", action:"conta"     as const },
+                { label:"Importar Extrato/Fatura", icon:"📄", bg:"#FF9500", action:"extrato"   as const },
+                { label:"Nova Transação", icon:"💸", bg:"#007AFF", action:"transacao" as const },
+              ]).map(item=>(
+                <div key={item.label} className={`fab-action${fabOpen?" visible":""}`}>
+                  <span className="fab-action-label" onClick={()=>{setModal(item.action);setFabOpen(false);}}>{item.label}</span>
+                  <button className="fab-action-btn" style={{background:item.bg,color:"#FFF"}} onClick={()=>{setModal(item.action);setFabOpen(false);}}>
+                    {item.icon}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button className={`fab-main${fabOpen?" open":""}`} onClick={()=>setFabOpen(f=>!f)}>+</button>
           </div>
-          <button className={`fab-main${fabOpen?" open":""}`} onClick={()=>setFabOpen(f=>!f)}>+</button>
-        </div>
+        )}
 
         {/* Toast */}
         {toast && <Toast msg={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
