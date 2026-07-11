@@ -1983,18 +1983,20 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
 
       // Tenta casar o banco detectado com uma conta já cadastrada
       const bancoDetectado = (data.banco_detectado ?? "").toLowerCase();
-      const contaCorrespondente = accounts.find(a => bancoDetectado && a.name.toLowerCase().includes(bancoDetectado));
+      const contaCorrespondente = accounts.find(a => bancoDetectado && (a.name.toLowerCase().includes(bancoDetectado) || bancoDetectado.includes(a.name.toLowerCase())));
       const accountId = contaCorrespondente?.id ?? accounts[0]?.id ?? null;
 
-      // Se for fatura, tenta achar o cartão correspondente (pelo banco ou final do cartão)
+      // Tenta achar o cartão correspondente pelo banco — independente de a IA ter classificado
+      // o documento como "fatura" ou "extrato" (algumas telas de fatura podem confundir a classificação).
       let cartaoId: string | null = null;
-      let cartaoNaoEncontrado = false;
-      if (data.tipo_documento === "fatura") {
-        const { data: cards } = await supabase.from("bills_to_pay").select("id, nome").eq("recorrente", true).not("dia_fechamento", "is", null);
-        const match = (cards ?? []).find((c: any) => bancoDetectado && (c.nome ?? "").toLowerCase().includes(bancoDetectado));
-        cartaoId = match?.id ?? null;
-        cartaoNaoEncontrado = !cartaoId;
-      }
+      const { data: cards } = await supabase.from("bills_to_pay").select("id, nome").eq("recorrente", true).not("dia_fechamento", "is", null);
+      const cardMatch = (cards ?? []).find((c: any) => {
+        const nomeCard = (c.nome ?? "").toLowerCase();
+        return bancoDetectado && (nomeCard.includes(bancoDetectado) || bancoDetectado.includes(nomeCard));
+      });
+      cartaoId = cardMatch?.id ?? null;
+      const temLancamentoCredito = transacoes.some(t => t.meio_pagamento === "credito");
+      const cartaoNaoEncontrado = temLancamentoCredito && !cartaoId;
 
       // Histórico ordenado do mais recente pro mais antigo, pra priorizar a classificação mais atual
       const historicoOrdenado = [...transactions].sort((a,b) => (b.date ?? "").localeCompare(a.date ?? ""));
@@ -2038,7 +2040,7 @@ function ImportarDocumentoModal({ userId, accounts, transactions, onClose, onImp
         if (!saldoErr) saldoAtualizado = data.saldo_final;
       }
 
-      setResumo({ banco: data.banco_detectado, tipo: data.tipo_documento, total: transacoes.length, reconhecidas, saldoAtualizado, cartaoNaoEncontrado: data.tipo_documento==="fatura" && cartaoNaoEncontrado });
+      setResumo({ banco: data.banco_detectado, tipo: data.tipo_documento, total: transacoes.length, reconhecidas, saldoAtualizado, cartaoNaoEncontrado });
       setStatus("done");
       onImported();
     } catch (e) {
