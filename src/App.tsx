@@ -3001,12 +3001,15 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
     load();
   }
 
-  // Sincroniza automaticamente a fatura do mês assim que a página carrega
+  // Sincroniza automaticamente a fatura do mês só na primeira vez (quando ainda não existe nenhuma
+  // fatura gerada pra esse mês) — depois disso, o valor é o que está salvo (inclusive edições manuais),
+  // e só muda de novo se o usuário clicar em "Sincronizar fatura".
   const autoSyncRan = useRef(false);
   useEffect(() => {
     if (loading || autoSyncRan.current || cards.length === 0) return;
     autoSyncRan.current = true;
-    (async () => { for (const card of cards) await syncCardInvoice(card, monthKey); })();
+    const cardsSemFatura = cards.filter(card => !all.find(b => b.template_id === card.id && (b.data_vencimento ?? "").startsWith(monthKey)));
+    (async () => { for (const card of cardsSemFatura) await syncCardInvoice(card, monthKey); })();
   }, [loading, all]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function toggleStatus(instance: BillToPay) {
@@ -3067,10 +3070,14 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
       ) : (
         <>
           {(() => {
-            const totalFaturaAtual = cards.reduce((s,c) => s + invoiceTotalFor(c.id, monthKey, transactions, c.dia_fechamento ?? 1, linkedFixedBills).total, 0);
+            const faturaExibida = (card: BillToPay) => {
+              const inst = all.find(b => b.template_id === card.id && (b.data_vencimento ?? "").startsWith(monthKey));
+              return inst ? (inst.valor_base ?? 0) : invoiceTotalFor(card.id, monthKey, transactions, card.dia_fechamento ?? 1, linkedFixedBills).total;
+            };
+            const totalFaturaAtual = cards.reduce((s,c) => s + faturaExibida(c), 0);
             const cardSegments = buildPieSegments(cards.map(c => ({
               label: c.nome ?? "Cartão",
-              value: Math.max(invoiceTotalFor(c.id, monthKey, transactions, c.dia_fechamento ?? 1, linkedFixedBills).total, 0.01),
+              value: Math.max(faturaExibida(c), 0.01),
               color: getCardColor(c.nome ?? ""),
             })));
             return (
@@ -3117,9 +3124,14 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
 
                 <div style={{marginTop:10,paddingTop:10,borderTop:"0.5px solid #E5E5E7"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                    <span style={{fontSize:12,color:"#86868B"}}>Fatura atual ({currentInvoice.count} lançamento{currentInvoice.count!==1?"s":""})</span>
-                    <span style={{fontSize:15,fontWeight:700,color:"#FF3B30"}}>{formatBRL(currentInvoice.total)}</span>
+                    <span style={{fontSize:12,color:"#86868B"}}>Fatura atual ({currentInvoice.count} lançamento{currentInvoice.count!==1?"s":""}){paid?" · Paga":""}</span>
+                    <span style={{fontSize:15,fontWeight:700,color:paid?"#34C759":"#FF3B30"}}>{formatBRL(instance ? (instance.valor_base ?? currentInvoice.total) : currentInvoice.total)}</span>
                   </div>
+                  {instance && Math.abs((instance.valor_base ?? 0) - currentInvoice.total) > 0.01 && (
+                    <div style={{fontSize:11,color:"#FF9500",marginBottom:8}}>
+                      Valor ajustado manualmente (soma das compras lançadas seria {formatBRL(currentInvoice.total)})
+                    </div>
+                  )}
                   {linkedFixedBills.filter(b=>b.cartao_vinculado_id===card.id).length > 0 && (
                     <div style={{fontSize:11,color:"#86868B",marginBottom:8,lineHeight:1.5}}>
                       Inclui assinaturas fixas: {linkedFixedBills.filter(b=>b.cartao_vinculado_id===card.id).map(b=>`${b.nome} (${formatBRL(b.valor_base??0)})`).join(", ")}
@@ -3241,6 +3253,27 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
                 );
               })
             )}
+
+            {/* Prévia dos próximos meses — parcelas já conhecidas que ainda não viraram fatura real */}
+            {(() => {
+              const jaExistentes = new Set(historyForCard(historyFor.id).map(h => (h.data_vencimento ?? "").slice(0,7)));
+              const preview = Array.from({length:6}, (_,i) => addMonthsToKey(monthKey, i+1))
+                .filter(mk => !jaExistentes.has(mk))
+                .map(mk => ({ mk, total: invoiceTotalFor(historyFor.id, mk, transactions, historyFor.dia_fechamento ?? 1, linkedFixedBills).total }))
+                .filter(p => p.total > 0);
+              if (preview.length === 0) return null;
+              return (
+                <>
+                  <div style={{fontSize:12,color:"#86868B",fontWeight:600,marginTop:16,marginBottom:6}}>Prévia (parcelas já conhecidas, ainda não faturadas)</div>
+                  {preview.map(p => (
+                    <div key={p.mk} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+                      <span style={{fontSize:13,color:"#86868B"}}>{monthKeyLabel(p.mk)}</span>
+                      <span style={{fontSize:13,fontWeight:600,color:"#86868B"}}>{formatBRL(p.total)}</span>
+                    </div>
+                  ))}
+                </>
+              );
+            })()}
           </div>
         </div>,
         document.body
