@@ -2872,18 +2872,29 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
             {historyForTemplate(historyFor.id).length === 0 ? (
               <div style={{fontSize:13,color:"#86868B"}}>Nenhuma cobrança gerada ainda.</div>
             ) : (
-              historyForTemplate(historyFor.id).sort((a,b)=>(a.data_vencimento??"").localeCompare(b.data_vencimento??"")).map((h,idx,arr) => (
+              historyForTemplate(historyFor.id).sort((a,b)=>(a.data_vencimento??"").localeCompare(b.data_vencimento??"")).map((h,idx,arr) => {
+                const paidH = (h.status??"").toLowerCase()==="pago";
+                return (
                 <div key={h.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
                   <span style={{fontSize:13,color:"#1D1D1F"}}>
                     {h.data_vencimento ? new Date(h.data_vencimento+"T00:00:00").toLocaleDateString("pt-BR",{month:"long",year:"numeric"}) : "—"}
                     {historyFor.parcelas_totais ? ` · ${idx+1}/${historyFor.parcelas_totais}` : ""}
                   </span>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <span style={{fontSize:13,fontWeight:600,color:(h.status??"").toLowerCase()==="pago"?"#34C759":"#FF9500"}}>{formatBRL(h.valor_base??0)} · {(h.status??"pendente")}</span>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span
+                      onClick={()=>toggleStatus(h)}
+                      style={{width:18,height:18,borderRadius:5,border:paidH?"none":"1.5px solid #C7C7CC",background:paidH?"#34C759":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:11,color:"#FFF",flexShrink:0}}
+                    >{paidH?"✓":""}</span>
+                    <input
+                      type="text" defaultValue={String(h.valor_base ?? "")}
+                      onBlur={(e)=>{ const v = parseFloat(e.target.value.replace(",",".")); if (!isNaN(v) && v !== h.valor_base) updateInstanceValue(h, v); }}
+                      style={{width:78,padding:"5px 7px",border:"1px solid #E5E5E7",borderRadius:8,fontSize:12,fontFamily:"inherit",textAlign:"right"}}
+                    />
                     <span onClick={()=>addInstanceToCalendar(h, historyFor)} title="Adicionar/atualizar na agenda" style={{fontSize:14,cursor:"pointer"}}>📅</span>
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>,
@@ -3007,6 +3018,13 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
     }
     setPayingBill(instance);
     setPayForm({ data_pagamento: todayIso, motivo_atraso: "", juros: String(instance.juros_atraso ?? "") });
+  }
+
+  async function updateInvoiceValue(instance: BillToPay, newValue: number) {
+    const { error } = await supabase.from("bills_to_pay").update({ valor_base: newValue }).eq("id", instance.id);
+    if (error) setToast({msg:"Erro ao atualizar valor",type:"error"});
+    else setToast({msg:"Valor da fatura atualizado",type:"success"});
+    load();
   }
 
   async function confirmPayment() {
@@ -3203,12 +3221,25 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
             {historyForCard(historyFor.id).length === 0 ? (
               <div style={{fontSize:13,color:"#86868B"}}>Nenhuma fatura gerada ainda.</div>
             ) : (
-              historyForCard(historyFor.id).map(h => (
-                <div key={h.id} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+              historyForCard(historyFor.id).map(h => {
+                const paidH = (h.status??"").toLowerCase()==="pago";
+                return (
+                <div key={h.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
                   <span style={{fontSize:13,color:"#1D1D1F"}}>{h.data_vencimento ? new Date(h.data_vencimento+"T00:00:00").toLocaleDateString("pt-BR",{month:"long",year:"numeric"}) : "—"}</span>
-                  <span style={{fontSize:13,fontWeight:600,color:(h.status??"").toLowerCase()==="pago"?"#34C759":"#FF9500"}}>{formatBRL(h.valor_base??0)} · {(h.status??"pendente")}</span>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span
+                      onClick={()=>toggleStatus(h)}
+                      style={{width:18,height:18,borderRadius:5,border:paidH?"none":"1.5px solid #C7C7CC",background:paidH?"#34C759":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:11,color:"#FFF",flexShrink:0}}
+                    >{paidH?"✓":""}</span>
+                    <input
+                      type="text" defaultValue={String(h.valor_base ?? "")}
+                      onBlur={(e)=>{ const v = parseFloat(e.target.value.replace(",",".")); if (!isNaN(v) && v !== h.valor_base) updateInvoiceValue(h, v); }}
+                      style={{width:78,padding:"5px 7px",border:"1px solid #E5E5E7",borderRadius:8,fontSize:12,fontFamily:"inherit",textAlign:"right"}}
+                    />
+                  </div>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>,
