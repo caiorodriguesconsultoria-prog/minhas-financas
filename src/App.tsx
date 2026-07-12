@@ -2252,6 +2252,28 @@ function invoiceTotalFor(cardId: string, targetMonthKey: string, transactions: N
   return { total, count };
 }
 
+// Lista detalhada de cada compra que compõe a fatura de um cartão num mês específico
+// (igual ao invoiceTotalFor, mas devolve os itens em vez de só a soma).
+function invoiceItemsFor(cardId: string, targetMonthKey: string, transactions: NormTx[], diaFechamento: number, linkedBills: BillToPay[] = []): { nome:string; valor:number; data:string; parcelaInfo:string|null }[] {
+  const items: { nome:string; valor:number; data:string; parcelaInfo:string|null }[] = [];
+  for (const t of transactions) {
+    if (t.cartao_id !== cardId || t.type !== "expense") continue;
+    const first = invoiceMonthKey(t.date, diaFechamento);
+    const n = t.parcela_total ?? 1;
+    for (let i = 0; i < n; i++) {
+      if (addMonthsToKey(first, i) === targetMonthKey) {
+        items.push({ nome: t.name, valor: t.value / n, data: t.date, parcelaInfo: n > 1 ? `${i+1}/${n}` : null });
+        break;
+      }
+    }
+  }
+  for (const b of linkedBills) {
+    if (b.cartao_vinculado_id !== cardId) continue;
+    items.push({ nome: `${b.nome} (assinatura)`, valor: b.valor_base ?? 0, data: "", parcelaInfo: null });
+  }
+  return items.sort((a,b)=>(b.data??"").localeCompare(a.data??""));
+}
+
 function daysInMonth(year: number, month0: number): number {
   return new Date(year, month0 + 1, 0).getDate();
 }
@@ -2929,6 +2951,9 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
   const [payForm, setPayForm] = useState({ data_pagamento:"", motivo_atraso:"", juros:"" });
   const [showImportFatura, setShowImportFatura] = useState(false);
   const [selectedCardSlice, setSelectedCardSlice] = useState<number|null>(null);
+  const [detailCard, setDetailCard] = useState<BillToPay | null>(null);
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const formSheetRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { if (showForm && formSheetRef.current) formSheetRef.current.scrollTop = 0; }, [showForm]);
@@ -3063,6 +3088,16 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
         <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",dia_fechamento:"",dia_vencimento:""});setShowForm(true);}}>+ Novo cartão</span>
       </div>
 
+      <button onClick={()=>{setShowMonthPicker(v=>!v); if(!selectedMonth) setSelectedMonth(monthKey);}}
+        style={{width:"100%",padding:"10px",background:selectedMonth&&selectedMonth!==monthKey?"#007AFF":"#F5F5F7",color:selectedMonth&&selectedMonth!==monthKey?"#FFF":"#1D1D1F",border:"none",borderRadius:12,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginBottom:showMonthPicker?8:14}}>
+        🗓️ {selectedMonth && selectedMonth!==monthKey ? `Vendo: ${monthKeyLabel(selectedMonth)}` : "Ver mês específico"}
+      </button>
+      {showMonthPicker && (
+        <input type="month" value={selectedMonth ?? monthKey}
+          onChange={e=>{setSelectedMonth(e.target.value); setShowMonthPicker(false);}}
+          style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,fontFamily:"inherit",marginBottom:14}} />
+      )}
+
       {loading ? (
         <div style={{textAlign:"center",padding:40,color:"#86868B"}}>Carregando…</div>
       ) : cards.length === 0 ? (
@@ -3101,11 +3136,14 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
 
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {cards.map(card => {
+            const viewMonth = selectedMonth ?? monthKey;
+            const isCurrentMonth = viewMonth === monthKey;
             const instance = instanceForCardThisMonth(card.id);
             const paid = (instance?.status ?? "").toLowerCase() === "pago";
-            const currentInvoice = invoiceTotalFor(card.id, monthKey, transactions, card.dia_fechamento!, linkedFixedBills);
-            const nextKey = addMonthsToKey(monthKey, 1);
+            const currentInvoice = invoiceTotalFor(card.id, viewMonth, transactions, card.dia_fechamento!, linkedFixedBills);
+            const nextKey = addMonthsToKey(viewMonth, 1);
             const nextInvoice = invoiceTotalFor(card.id, nextKey, transactions, card.dia_fechamento!, linkedFixedBills);
+            const valorExibido = isCurrentMonth && instance ? (instance.valor_base ?? currentInvoice.total) : currentInvoice.total;
             const daysToClose = (() => {
               const today = new Date();
               let close = new Date(today.getFullYear(), today.getMonth(), card.dia_fechamento!);
@@ -3113,13 +3151,13 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
               return Math.ceil((close.getTime()-today.getTime())/86400000);
             })();
             return (
-              <div key={card.id} style={{background:"#F5F5F7",borderRadius:16,padding:14}}>
+              <div key={card.id} onClick={()=>setDetailCard(card)} style={{background:"#F5F5F7",borderRadius:16,padding:14,cursor:"pointer"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                   <div>
                     <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>💳 {card.nome}</div>
                     <div style={{fontSize:12,color:"#86868B",marginTop:2}}>Fecha dia {card.dia_fechamento} · vence dia {card.dia_vencimento} · fecha em {daysToClose} dia{daysToClose!==1?"s":""}</div>
                   </div>
-                  <div style={{display:"flex",gap:6}}>
+                  <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
                     <span onClick={()=>{setEditing(card);setForm({nome:card.nome??"",dia_fechamento:String(card.dia_fechamento??""),dia_vencimento:String(card.dia_vencimento??"")});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
                     <span onClick={()=>deleteCard(card)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
                   </div>
@@ -3127,10 +3165,10 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
 
                 <div style={{marginTop:10,paddingTop:10,borderTop:"0.5px solid #E5E5E7"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                    <span style={{fontSize:12,color:"#86868B"}}>Fatura atual ({currentInvoice.count} lançamento{currentInvoice.count!==1?"s":""}){paid?" · Paga":""}</span>
-                    <span style={{fontSize:15,fontWeight:700,color:paid?"#34C759":"#FF3B30"}}>{formatBRL(instance ? (instance.valor_base ?? currentInvoice.total) : currentInvoice.total)}</span>
+                    <span style={{fontSize:12,color:"#86868B"}}>{isCurrentMonth?"Fatura atual":`Fatura de ${monthKeyLabel(viewMonth)}`} ({currentInvoice.count} lançamento{currentInvoice.count!==1?"s":""}){isCurrentMonth&&paid?" · Paga":""}</span>
+                    <span style={{fontSize:15,fontWeight:700,color:isCurrentMonth&&paid?"#34C759":"#FF3B30"}}>{formatBRL(valorExibido)}</span>
                   </div>
-                  {instance && Math.abs((instance.valor_base ?? 0) - currentInvoice.total) > 0.01 && (
+                  {isCurrentMonth && instance && Math.abs((instance.valor_base ?? 0) - currentInvoice.total) > 0.01 && (
                     <div style={{fontSize:11,color:"#FF9500",marginBottom:8}}>
                       Valor ajustado manualmente (soma das compras lançadas seria {formatBRL(currentInvoice.total)})
                     </div>
@@ -3144,7 +3182,7 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
                     <span style={{fontSize:12,color:"#86868B"}}>Próxima fatura ({monthKeyLabel(nextKey)})</span>
                     <span style={{fontSize:13,fontWeight:600,color:"#86868B"}}>{formatBRL(nextInvoice.total)}</span>
                   </div>
-                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
                     <button onClick={()=>syncCardInvoice(card, monthKey)} style={{flex:1,padding:"9px",background:"#007AFF",color:"#FFF",border:"none",borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
                       Sincronizar fatura
                     </button>
@@ -3163,6 +3201,40 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
           })}
         </div>
         </>
+      )}
+
+      {/* Modal: compras detalhadas do cartão no mês */}
+      {detailCard && createPortal(
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setDetailCard(null)}>
+          <div className="modal-sheet-center" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"75vh",overflowY:"auto"}}>
+            {(() => {
+              const viewMonth = selectedMonth ?? monthKey;
+              const items = invoiceItemsFor(detailCard.id, viewMonth, transactions, detailCard.dia_fechamento ?? 1, linkedFixedBills);
+              const total = items.reduce((s,i)=>s+i.valor,0);
+              return (
+                <>
+                  <div style={{fontSize:17,fontWeight:600,marginBottom:2}}>💳 {detailCard.nome}</div>
+                  <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>{monthKeyLabel(viewMonth)} · {items.length} compra{items.length!==1?"s":""} · {formatBRL(total)}</div>
+                  {items.length === 0 ? (
+                    <div style={{fontSize:13,color:"#86868B",textAlign:"center",padding:"20px 0"}}>Nenhuma compra lançada nesse mês pra esse cartão.</div>
+                  ) : (
+                    items.map((it,i) => (
+                      <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+                        <div>
+                          <div style={{fontSize:13,color:"#1D1D1F"}}>{it.nome}{it.parcelaInfo?<span style={{color:"#86868B"}}> · {it.parcelaInfo}</span>:""}</div>
+                          {it.data && <div style={{fontSize:11,color:"#86868B",marginTop:2}}>{new Date(it.data+"T00:00:00").toLocaleDateString("pt-BR")}</div>}
+                        </div>
+                        <span style={{fontSize:13,fontWeight:600,color:"#5856D6"}}>{formatBRL(it.valor)}</span>
+                      </div>
+                    ))
+                  )}
+                </>
+              );
+            })()}
+            <button onClick={()=>setDetailCard(null)} style={{width:"100%",padding:12,marginTop:16,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Fechar</button>
+          </div>
+        </div>,
+        document.body
       )}
 
       {/* Form modal */}
