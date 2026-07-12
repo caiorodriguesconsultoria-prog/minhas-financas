@@ -4453,6 +4453,9 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   const transactionsThisMonthMain = transactions.filter(t => (t.date ?? "").startsWith(currentMonthKeyMain));
   const totalIncome  = transactionsThisMonthMain.filter(t=>t.type==="income").reduce((s,t)=>s+t.value,0);
   const totalExpense = transactionsThisMonthMain.filter(t=>t.type==="expense").reduce((s,t)=>s+t.value,0);
+  const totalSaidas      = transactionsThisMonthMain.filter(t=>t.type==="expense" && t.meio_pagamento!=="credito").reduce((s,t)=>s+t.value,0);
+  const totalCartaoMes   = transactionsThisMonthMain.filter(t=>t.meio_pagamento==="credito" && t.type!=="transfer").reduce((s,t)=>s+t.value,0);
+  const totalInvestMes   = transactionsThisMonthMain.filter(t=>t.category==="Investimentos").reduce((s,t)=>s+t.value,0);
   const saldo        = totalIncome - totalExpense;
 
   const handleNav = (page: NavPage) => { setNavPage(page); setFabOpen(false); };
@@ -4529,47 +4532,26 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
             <div style={{fontSize:10,color:"#8E8E93",textAlign:"center",padding:"6px 0 2px",fontWeight:600,letterSpacing:0.3,textTransform:"uppercase"}}>
               {MONTH_NAMES[new Date().getMonth()]} {new Date().getFullYear()}
             </div>
-            <div style={{display:"flex",width:"100%"}}>
-              <div className="summary-item">
+            <div style={{display:"flex",width:"100%",overflowX:"auto",gap:4}}>
+              <div className="summary-item" style={{flex:"0 0 auto",minWidth:92,padding:"0 6px"}}>
                 <div className="summary-label">Receitas</div>
                 <div className="summary-value income">{loading?"…":formatBRL(totalIncome)}</div>
               </div>
-              <div className="summary-item">
-                <div className="summary-label">Despesas</div>
-                <div className="summary-value expense">{loading?"…":formatBRL(totalExpense)}</div>
+              <div className="summary-item" style={{flex:"0 0 auto",minWidth:92,padding:"0 6px"}}>
+                <div className="summary-label">Saídas</div>
+                <div className="summary-value expense">{loading?"…":formatBRL(totalSaidas)}</div>
               </div>
-              <div className="summary-item">
-                <div className="summary-label">Saldo</div>
-                <div className={`summary-value ${saldo>=0?"income":"expense"}`}>{loading?"…":formatBRL(saldo)}</div>
+              <div className="summary-item" style={{flex:"0 0 auto",minWidth:92,padding:"0 6px"}}>
+                <div className="summary-label">Cartão de Crédito</div>
+                <div className="summary-value" style={{color:"#5856D6"}}>{loading?"…":formatBRL(totalCartaoMes)}</div>
+              </div>
+              <div className="summary-item" style={{flex:"0 0 auto",minWidth:92,padding:"0 6px"}}>
+                <div className="summary-label">Investimentos</div>
+                <div className="summary-value" style={{color:"#34C759"}}>{loading?"…":formatBRL(totalInvestMes)}</div>
               </div>
             </div>
           </div>
         )}
-
-        {navPage === "home" && view === "geral" && !loading && (() => {
-          const saidasPorMeio = ["pix","debito","ted_doc","boleto"].map(mv => {
-            const pm = PAYMENT_METHODS.find(p=>p.dbValue===mv)!;
-            const total = transactionsThisMonthMain.filter(t=>t.type==="expense" && t.meio_pagamento===mv).reduce((s,t)=>s+t.value,0);
-            return { label: pm.label, total, color: pm.color };
-          }).filter(x => x.total > 0);
-          if (saidasPorMeio.length === 0) return null;
-          return (
-            <div style={{padding:"0 16px 16px"}}>
-              <div style={{fontSize:11,color:"#8E8E93",fontWeight:600,textTransform:"uppercase",letterSpacing:0.3,marginBottom:8}}>Saídas por forma de pagamento</div>
-              <div style={{background:"#F5F5F7",borderRadius:14,padding:"10px 14px"}}>
-                {saidasPorMeio.map((s,i) => (
-                  <div key={s.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:i<saidasPorMeio.length-1?"0.5px solid #E5E5E7":"none"}}>
-                    <span style={{fontSize:13,color:"#3C3C43",display:"flex",alignItems:"center",gap:8}}>
-                      <span style={{width:8,height:8,borderRadius:4,background:s.color,display:"inline-block"}} />
-                      {s.label}
-                    </span>
-                    <span style={{fontSize:13,fontWeight:600,color:"#FF3B30"}}>{formatBRL(s.total)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })()}
 
         {/* Pages */}
         {navPage === "home" && view === "geral" && (
