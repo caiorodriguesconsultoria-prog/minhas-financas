@@ -4455,8 +4455,25 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   const totalExpense = transactionsThisMonthMain.filter(t=>t.type==="expense").reduce((s,t)=>s+t.value,0);
   const totalSaidas      = transactionsThisMonthMain.filter(t=>t.type==="expense" && t.meio_pagamento!=="credito").reduce((s,t)=>s+t.value,0);
   const totalCartaoMes   = transactionsThisMonthMain.filter(t=>t.meio_pagamento==="credito" && t.type!=="transfer").reduce((s,t)=>s+t.value,0);
-  const totalInvestMes   = transactionsThisMonthMain.filter(t=>t.category==="Investimentos").reduce((s,t)=>s+t.value,0);
   const saldo        = totalIncome - totalExpense;
+
+  // Total investido este mês — vem da aba Investimentos (aportes iniciais + lançamentos do mês), não de "transactions"
+  const [totalInvestMes, setTotalInvestMes] = useState(0);
+  useEffect(() => {
+    (async () => {
+      const [invRes, lancRes] = await Promise.all([
+        supabase.from("investimentos").select("valor_inicial, data_aplicacao"),
+        supabase.from("investimento_lancamentos").select("valor_ganho, mes"),
+      ]);
+      const aportesNovos = (invRes.data ?? [])
+        .filter((i: any) => (i.data_aplicacao ?? "").startsWith(currentMonthKeyMain))
+        .reduce((s: number, i: any) => s + (i.valor_inicial ?? 0), 0);
+      const lancamentosDoMes = (lancRes.data ?? [])
+        .filter((l: any) => l.mes === currentMonthKeyMain)
+        .reduce((s: number, l: any) => s + (l.valor_ganho ?? 0), 0);
+      setTotalInvestMes(aportesNovos + Math.max(lancamentosDoMes, 0));
+    })();
+  }, [currentMonthKeyMain]);
 
   const handleNav = (page: NavPage) => { setNavPage(page); setFabOpen(false); };
   const showToast = (msg: string, type: "error"|"success" = "error") => setToast({msg,type});
@@ -4529,7 +4546,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
         {/* Summary bar (home, general view only) */}
         {navPage === "home" && view === "geral" && (
           <div className="summary-bar" style={{flexDirection:"column",gap:0}}>
-            <div style={{fontSize:10,color:"#8E8E93",textAlign:"center",padding:"6px 0 2px",fontWeight:600,letterSpacing:0.3,textTransform:"uppercase"}}>
+            <div style={{fontSize:10,color:"#8E8E93",textAlign:"left",padding:"0 6px 6px",fontWeight:600,letterSpacing:0.3,textTransform:"uppercase"}}>
               {MONTH_NAMES[new Date().getMonth()]} {new Date().getFullYear()}
             </div>
             <div style={{display:"flex",width:"100%",overflowX:"auto",gap:4}}>
