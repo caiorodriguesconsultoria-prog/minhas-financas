@@ -4100,32 +4100,35 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
               </div>
             );
           })()}
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            {investimentos.filter(inv => bankFilter==="Todos" || (inv.instituicao||"Sem banco")===bankFilter).map(inv => {
-            const ganho = totalGanhoFor(inv.id);
-            const saldoAtual = saldoAtualFor(inv.id, inv.valor_inicial??0);
-            const rentabilidade = inv.valor_inicial ? (ganho / inv.valor_inicial) * 100 : 0;
-            return (
-              <div key={inv.id} onClick={()=>setDetailFor(inv)} style={{background:"#F5F5F7",borderRadius:16,padding:14,cursor:"pointer"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-                  <div>
-                    <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>{inv.nome}</div>
-                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>
-                      {inv.tipo}{inv.instituicao?` · ${inv.instituicao}`:""} · saldo atual {formatBRL(saldoAtual)}
-                      {(inv as any).data_aplicacao ? ` · ${new Date((inv as any).data_aplicacao+"T00:00:00").toLocaleDateString("pt-BR")}` : ""}
+          <div style={{display:"flex",flexDirection:"column"}}>
+            {investimentos
+              .filter(inv => bankFilter==="Todos" || (inv.instituicao||"Sem banco")===bankFilter)
+              .sort((a,b)=>((b as any).data_aplicacao ?? "").localeCompare((a as any).data_aplicacao ?? ""))
+              .map(inv => {
+              const ganho = totalGanhoFor(inv.id);
+              const saldoAtual = saldoAtualFor(inv.id, inv.valor_inicial??0);
+              const dataAplicacao = (inv as any).data_aplicacao as string | null;
+              return (
+                <div key={inv.id} className="tx-item tx-enter" onClick={()=>setDetailFor(inv)}>
+                  <div className="tx-icon" style={{background:"#F2F2F5"}}>📈</div>
+                  <div className="tx-info">
+                    <div className="tx-name">{inv.nome}</div>
+                    <div style={{fontSize:12,color:"#8E8E93",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      {inv.tipo}{inv.instituicao?` · ${inv.instituicao}`:""}{ganho!==0?` · rend. ${formatBRL(ganho)}`:""}
                     </div>
                   </div>
-                  <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
-                    <span onClick={()=>{setEditing(inv);const matches=accounts.some(a=>a.name===inv.instituicao);setForm({nome:inv.nome,tipo:inv.tipo??TIPOS_INVESTIMENTO[0],valor_inicial:String(inv.valor_inicial??""),instituicao:matches?(inv.instituicao??""):(inv.instituicao?"Outro":""),instituicaoOutro:matches?"":(inv.instituicao??""),dataAplicacao:(inv as any).data_aplicacao??new Date().toISOString().slice(0,10)});setShowForm(true);}} style={{cursor:"pointer",fontSize:16}}>✏️</span>
-                    <span onClick={()=>deleteInvestimento(inv)} style={{cursor:"pointer",fontSize:16}}>🗑️</span>
+                  <div className="tx-right" onClick={e=>e.stopPropagation()} style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div>
+                      <div style={{fontSize:15,fontWeight:700,color:"#1D1D1F"}}>{formatBRL(saldoAtual)}</div>
+                      <div style={{fontSize:11,color:"#8E8E93"}}>{dataAplicacao ? new Date(dataAplicacao+"T00:00:00").toLocaleDateString("pt-BR") : ""}</div>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      <span onClick={()=>{setEditing(inv);const matches=accounts.some(a=>a.name===inv.instituicao);setForm({nome:inv.nome,tipo:inv.tipo??TIPOS_INVESTIMENTO[0],valor_inicial:String(inv.valor_inicial??""),instituicao:matches?(inv.instituicao??""):(inv.instituicao?"Outro":""),instituicaoOutro:matches?"":(inv.instituicao??""),dataAplicacao:(inv as any).data_aplicacao??new Date().toISOString().slice(0,10)});setShowForm(true);}} style={{cursor:"pointer",fontSize:14}}>✏️</span>
+                      <span onClick={()=>deleteInvestimento(inv)} style={{cursor:"pointer",fontSize:14}}>🗑️</span>
+                    </div>
                   </div>
                 </div>
-                <div style={{marginTop:10,paddingTop:10,borderTop:"0.5px solid #E5E5E7",display:"flex",justifyContent:"space-between"}}>
-                  <span style={{fontSize:12,color:"#86868B"}}>Rendimento total</span>
-                  <span style={{fontSize:14,fontWeight:700,color:ganho>=0?"#34C759":"#FF3B30"}}>{formatBRL(ganho)} ({rentabilidade.toFixed(1)}%)</span>
-                </div>
-              </div>
-            );
+              );
             })}
           </div>
         </>
