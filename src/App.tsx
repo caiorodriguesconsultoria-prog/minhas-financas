@@ -3492,17 +3492,20 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
     const primeiraKey = sim.primeira_parcela.slice(0,7);
     const rendaBase = planoAtual?.renda_mensal ?? 0;
     const investimentoBase = planoAtual?.investimento_mensal ?? 0;
-    const meses: { mes:string; renda:number; despesas:number; investimento:number; saldoLivre:number; parcelaAtiva:boolean; rendaExtraAtiva:boolean }[] = [];
+    const meses: { mes:string; renda:number; rendaExtra:number; despesas:number; investimento:number; parcela:number; total:number; saldoLivre:number; parcelaAtiva:boolean; rendaExtraAtiva:boolean }[] = [];
     for (let i = 0; i < 12; i++) {
       const mKey = addMonthsToKey(monthKey, i);
       const mesesDesdePrimeira = monthsBetween(primeiraKey, mKey);
       const parcelaAtiva = mesesDesdePrimeira >= 0 && mesesDesdePrimeira < sim.parcelas;
       const rendaExtraAtiva = !!sim.renda_extra && mesesDesdePrimeira >= 0 && mesesDesdePrimeira < (sim.renda_extra_meses ?? 1);
-      const despesasComprometidas = despesasPrevistasParaMes(mKey) + (parcelaAtiva ? parcelaValor : 0);
-      const rendaDoMes = rendaBase + (rendaExtraAtiva ? (sim.renda_extra ?? 0) : 0);
+      const despesasBase = despesasPrevistasParaMes(mKey);
+      const parcelaDoMes = parcelaAtiva ? parcelaValor : 0;
+      const rendaExtraDoMes = rendaExtraAtiva ? (sim.renda_extra ?? 0) : 0;
+      const total = despesasBase + investimentoBase + parcelaDoMes;
       meses.push({
-        mes: mKey, renda: rendaDoMes, despesas: despesasComprometidas, investimento: investimentoBase,
-        saldoLivre: rendaDoMes - despesasComprometidas - investimentoBase,
+        mes: mKey, renda: rendaBase, rendaExtra: rendaExtraDoMes,
+        despesas: despesasBase, investimento: investimentoBase, parcela: parcelaDoMes, total,
+        saldoLivre: (rendaBase + rendaExtraDoMes) - total,
         parcelaAtiva, rendaExtraAtiva,
       });
     }
@@ -3688,20 +3691,52 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
               return (
                 <>
                   <div ref={reportRef} style={{background:"#FFF",padding:4}}>
-                    <div style={{fontSize:17,fontWeight:700,marginBottom:2}}>{reportSim.nome}</div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:2}}>
+                      <div style={{fontSize:17,fontWeight:700}}>{reportSim.nome}</div>
+                      <span onClick={()=>{ if(confirm("Excluir essa simulação?")){ deleteSimulacao(reportSim.id); setReportSim(null); } }} style={{fontSize:16,cursor:"pointer"}}>🗑️</span>
+                    </div>
                     <div style={{fontSize:12,color:"#86868B",marginBottom:16}}>
                       {formatBRL(reportSim.valor_total)} em {reportSim.parcelas}x de {formatBRL(parcelaValor)} · Relatório de 12 meses
                     </div>
                     <div style={{borderTop:"0.5px solid #E5E5E7"}}>
                       {meses.map((m,i) => (
-                        <div key={i} style={{padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
-                          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                            <span style={{fontSize:13,fontWeight:600}}>{monthKeyLabel(m.mes)}</span>
-                            <span style={{fontSize:13,fontWeight:700,color:m.saldoLivre>=0?"#34C759":"#FF3B30"}}>{formatBRL(m.saldoLivre)}</span>
+                        <div key={i} style={{padding:"12px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+                          <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>{monthKeyLabel(m.mes)}</div>
+                          <div style={{display:"flex",gap:16}}>
+                            <div style={{flex:1}}>
+                              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                                <span style={{color:"#86868B"}}>Renda</span>
+                                <span style={{fontWeight:600,color:"#34C759"}}>{formatBRL(m.renda)}</span>
+                              </div>
+                              {m.rendaExtra > 0 && (
+                                <div style={{display:"flex",justifyContent:"space-between",fontSize:12}}>
+                                  <span style={{color:"#86868B"}}>Valor extra</span>
+                                  <span style={{fontWeight:600,color:"#34C759"}}>{formatBRL(m.rendaExtra)}</span>
+                                </div>
+                              )}
+                            </div>
+                            <div style={{flex:1,borderLeft:"0.5px solid #E5E5E7",paddingLeft:16}}>
+                              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                                <span style={{color:"#86868B"}}>Despesas</span>
+                                <span style={{fontWeight:600}}>{formatBRL(m.despesas)}</span>
+                              </div>
+                              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                                <span style={{color:"#86868B"}}>Investimentos</span>
+                                <span style={{fontWeight:600}}>{formatBRL(m.investimento)}</span>
+                              </div>
+                              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                                <span style={{color:"#86868B"}}>Parcela</span>
+                                <span style={{fontWeight:600,color:m.parcelaAtiva?"#FF9500":"#86868B"}}>{formatBRL(m.parcela)}</span>
+                              </div>
+                              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,paddingTop:4,borderTop:"0.5px solid #E5E5E7"}}>
+                                <span style={{color:"#1D1D1F",fontWeight:600}}>Total</span>
+                                <span style={{fontWeight:700}}>{formatBRL(m.total)}</span>
+                              </div>
+                            </div>
                           </div>
-                          <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#86868B"}}>
-                            <span>Renda: {formatBRL(m.renda)}{m.rendaExtraAtiva?" (com extra)":""}</span>
-                            <span>Despesas: {formatBRL(m.despesas)}{m.parcelaAtiva?" (com parcela)":""}</span>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10,paddingTop:8,borderTop:"1px solid #1D1D1F"}}>
+                            <span style={{fontSize:12,fontWeight:600}}>Saldo do mês</span>
+                            <span style={{fontSize:15,fontWeight:700,color:m.saldoLivre>=0?"#34C759":"#FF3B30"}}>{formatBRL(m.saldoLivre)}</span>
                           </div>
                         </div>
                       ))}
