@@ -1321,8 +1321,13 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
   const [parcelas,    setParcelas]    = useState("1");
   const [anexoFile,   setAnexoFile]   = useState<File | null>(null);
   const [uploadingAnexo, setUploadingAnexo] = useState(false);
-
-  const cards = bills.filter(b => b.recorrente && (b.categoria ?? "").toLowerCase() === "cartão de crédito");
+  const [cards, setCards] = useState<{id:string; nome:string}[]>([]);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("bills_to_pay").select("id, nome").eq("recorrente", true).not("dia_fechamento", "is", null);
+      setCards((data ?? []) as {id:string; nome:string}[]);
+    })();
+  }, []);
 
   useEffect(() => {
     if (accounts.length > 0 && !form.accountId) {
@@ -1671,7 +1676,7 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
             <label className="form-label">Cartão</label>
             {cards.length === 0 ? (
               <div style={{fontSize:12,color:"#86868B",padding:"6px 0"}}>
-                Nenhum cartão cadastrado ainda. Cadastre em <strong>Fixas</strong> (categoria "Cartão de Crédito") para vincular a fatura automaticamente.
+                Nenhum cartão cadastrado ainda. Cadastre em <strong>Cartões</strong> para vincular a fatura automaticamente.
               </div>
             ) : (
               <select className="form-input" value={cartaoId} onChange={e=>setCartaoId(e.target.value)}>
