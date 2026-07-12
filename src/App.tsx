@@ -1196,14 +1196,13 @@ function HomePage({
                   <div key={tx.id} className="tx-item tx-enter" style={{animationDelay:`${i*0.04}s`}} onClick={()=>onEditTx(tx)}>
                     <div className="tx-icon" style={{background:"#F2F2F5"}}>{icon}</div>
                     <div className="tx-info">
-                      <div className="tx-name">{tx.name}{tx.anexo_url && <span title="Tem comprovante anexado" style={{marginLeft:6,fontSize:12}}>📎</span>}</div>
+                      <div className="tx-name">{tx.name}{tx.meio_pagamento==="credito" && <span title="Cartão de crédito" style={{marginLeft:6,fontSize:11,color:"#5856D6"}}>💳</span>}{tx.anexo_url && <span title="Tem comprovante anexado" style={{marginLeft:6,fontSize:12}}>📎</span>}</div>
                       <div style={{fontSize:12,color:"#8E8E93",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                         {subtitleParts.join(" · ")}
                       </div>
                     </div>
                     <div className="tx-right">
-                      <div className={`tx-value ${tx.type==="income"?"income":tx.type==="transfer"?"transfer":"expense"}`} style={tx.type==="transfer"?{color:"#8E8E93"}:undefined}>
-                        {tx.type==="income"?"+":tx.type==="transfer"?"⇄ ":"−"}{formatBRL(tx.value)}
+                      <div className={`tx-value ${tx.type==="income"?"income":tx.type==="transfer"?"transfer":"expense"}`} style={tx.type==="transfer"?{color:"#8E8E93"}:tx.meio_pagamento==="credito"?{color:"#5856D6"}:undefined}>                        {tx.type==="income"?"+":tx.type==="transfer"?"⇄ ":"−"}{formatBRL(tx.value)}
                       </div>
                       <div className="tx-date">{formatDatePT(tx.date)} · {tx.account}</div>
                     </div>
@@ -2286,6 +2285,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
   }, [showForm]);
 
   const [cardsSummary, setCardsSummary] = useState<BillToPay[]>([]);
+  const [allRaw, setAllRaw] = useState<BillToPay[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2293,6 +2293,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
     if (!error) {
       setAll((data ?? []).filter((b: BillToPay) => !b.dia_fechamento) as BillToPay[]);
       setCardsSummary((data ?? []).filter((b: BillToPay) => b.recorrente && !!b.dia_fechamento) as BillToPay[]);
+      setAllRaw((data ?? []) as BillToPay[]);
     }
     setLoading(false);
   }, []);
@@ -2306,8 +2307,10 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
   const now = new Date();
   const monthKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
 
-  const cardsTotalAtual = cardsSummary.reduce((sum, card) =>
-    sum + invoiceTotalFor(card.id, monthKey, transactions, card.dia_fechamento ?? 1, templates).total, 0);
+  const cardsTotalAtual = cardsSummary.reduce((sum, card) => {
+    const inst = allRaw.find(b => b.template_id === card.id && (b.data_vencimento ?? "").startsWith(monthKey));
+    return sum + (inst ? (inst.valor_base ?? 0) : invoiceTotalFor(card.id, monthKey, transactions, card.dia_fechamento ?? 1, templates).total);
+  }, 0);
 
   const instanceForTemplateThisMonth = (tplId: string) =>
     all.find(b => b.template_id === tplId && (b.data_vencimento ?? "").startsWith(monthKey));
