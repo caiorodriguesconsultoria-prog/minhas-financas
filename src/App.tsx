@@ -957,6 +957,7 @@ function HomePage({
   const [txFilter,    setTxFilter]    = useState<"todos"|"receita"|"despesa">("todos");
   const [showFilter,  setShowFilter]  = useState(false);
   const [totalInvestido, setTotalInvestido] = useState<number | null>(null);
+  const [cardsById, setCardsById] = useState<Record<string,string>>({});
   useEffect(() => { const t = setTimeout(() => setBarsReady(true), 60); return () => clearTimeout(t); }, []);
   useEffect(() => {
     (async () => {
@@ -967,6 +968,12 @@ function HomePage({
       const base = (invRes.data ?? []).reduce((s: number, i: { valor_inicial?: number }) => s + (i.valor_inicial ?? 0), 0);
       const ganhos = (lancRes.data ?? []).reduce((s: number, l: { valor_ganho?: number }) => s + (l.valor_ganho ?? 0), 0);
       setTotalInvestido(base + ganhos);
+    })();
+    (async () => {
+      const { data } = await supabase.from("bills_to_pay").select("id, nome").eq("recorrente", true).not("dia_fechamento", "is", null);
+      const map: Record<string,string> = {};
+      (data ?? []).forEach((c: { id:string; nome:string }) => { map[c.id] = c.nome; });
+      setCardsById(map);
     })();
   }, []);
 
@@ -1196,7 +1203,11 @@ function HomePage({
                   <div key={tx.id} className="tx-item tx-enter" style={{animationDelay:`${i*0.04}s`}} onClick={()=>onEditTx(tx)}>
                     <div className="tx-icon" style={{background:"#F2F2F5"}}>{icon}</div>
                     <div className="tx-info">
-                      <div className="tx-name">{tx.name}{tx.meio_pagamento==="credito" && <span title="Cartão de crédito" style={{marginLeft:6,fontSize:11,color:"#5856D6"}}>💳</span>}{tx.anexo_url && <span title="Tem comprovante anexado" style={{marginLeft:6,fontSize:12}}>📎</span>}</div>
+                      <div className="tx-name">{tx.name}{tx.meio_pagamento==="credito" && tx.cartao_id && cardsById[tx.cartao_id] && (
+                        <span title={cardsById[tx.cartao_id]} style={{marginLeft:6,display:"inline-flex",verticalAlign:"middle",alignItems:"center",justifyContent:"center",width:16,height:16,borderRadius:5,background:getCardColor(cardsById[tx.cartao_id]),color:getCardTextColor(cardsById[tx.cartao_id]),fontSize:8,fontWeight:800}}>
+                          {getCardInitials(cardsById[tx.cartao_id]).slice(0,2)}
+                        </span>
+                      )}{tx.anexo_url && <span title="Tem comprovante anexado" style={{marginLeft:6,fontSize:12}}>📎</span>}</div>
                       <div style={{fontSize:12,color:"#8E8E93",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                         {subtitleParts.join(" · ")}
                       </div>
@@ -3058,6 +3069,22 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
     load();
   }
 
+  async function criarOuEditarFatura(card: BillToPay, targetMonthKey: string, valor: number) {
+    const existente = all.find(b => b.template_id === card.id && (b.data_vencimento ?? "").startsWith(targetMonthKey));
+    if (existente) {
+      await updateInvoiceValue(existente, valor);
+      return;
+    }
+    const data_vencimento = dueDateForMonthKey(targetMonthKey, card.dia_vencimento ?? 10);
+    const { error } = await supabase.from("bills_to_pay").insert({
+      nome: card.nome, categoria: card.categoria, valor_base: valor,
+      data_vencimento, status: "pendente", recorrente: false, template_id: card.id, user_id: userId,
+    });
+    if (error) setToast({msg:`Erro ao criar fatura: ${error.message}`,type:"error"});
+    else setToast({msg:"Fatura criada e editável a partir de agora",type:"success"});
+    load();
+  }
+
   async function confirmPayment() {
     if (!payingBill) return;
     setSaving(true);
@@ -3339,11 +3366,17 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
               if (preview.length === 0) return null;
               return (
                 <>
-                  <div style={{fontSize:12,color:"#86868B",fontWeight:600,marginTop:16,marginBottom:6}}>Prévia (parcelas já conhecidas, ainda não faturadas)</div>
+                  <div style={{fontSize:12,color:"#86868B",fontWeight:600,marginTop:16,marginBottom:6}}>Prévia (toque em ✏️ pra criar/editar a fatura desse mês)</div>
                   {preview.map(p => (
-                    <div key={p.mk} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+                    <div key={p.mk} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"0.5px solid #E5E5E7"}}>
                       <span style={{fontSize:13,color:"#86868B"}}>{monthKeyLabel(p.mk)}</span>
-                      <span style={{fontSize:13,fontWeight:600,color:"#86868B"}}>{formatBRL(p.total)}</span>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <input
+                          type="text" defaultValue={p.total.toFixed(2)}
+                          onBlur={(e)=>{ const v = parseFloat(e.target.value.replace(",",".")); if (!isNaN(v)) criarOuEditarFatura(historyFor, p.mk, v); }}
+                          style={{width:78,padding:"5px 7px",border:"1px solid #E5E5E7",borderRadius:8,fontSize:12,fontFamily:"inherit",textAlign:"right",color:"#86868B"}}
+                        />
+                      </div>
                     </div>
                   ))}
                 </>
