@@ -44,6 +44,7 @@ export interface InvestimentoLancamento {
 export interface SimulacaoCompra {
   id: string; user_id?: string; nome: string; valor_total: number;
   parcelas: number; primeira_parcela: string; categoria?: string | null; created_at?: string;
+  renda_extra?: number | null; renda_extra_meses?: number | null;
 }
 export interface PlanejamentoMensal {
   id: string; user_id?: string; mes: string;

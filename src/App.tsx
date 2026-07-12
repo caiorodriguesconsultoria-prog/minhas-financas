@@ -2223,6 +2223,11 @@ function addMonthsToKey(key: string, n: number): string {
   const ny = Math.floor(total/12), nm = total%12;
   return `${ny}-${String(nm+1).padStart(2,"0")}`;
 }
+function monthsBetween(fromKey: string, toKey: string): number {
+  const [fy,fm] = fromKey.split("-").map(Number);
+  const [ty,tm] = toKey.split("-").map(Number);
+  return (ty*12+tm) - (fy*12+fm);
+}
 function monthKeyLabel(key: string): string {
   const [y,m] = key.split("-").map(Number);
   return `${MONTH_NAMES[m-1]} ${y}`;
@@ -3372,9 +3377,11 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
 
   const [showSimForm, setShowSimForm] = useState(false);
-  const [simForm, setSimForm] = useState({ nome:"", valor_total:"", parcelas:"1", primeira_parcela:new Date().toISOString().slice(0,10) });
+  const [simForm, setSimForm] = useState({ nome:"", valor_parcela:"", parcelas:"1", primeira_parcela:new Date().toISOString().slice(0,10), renda_extra:"", renda_extra_meses:"1" });
   const [savingSim, setSavingSim] = useState(false);
-  const [expandedSim, setExpandedSim] = useState<string|null>(null);
+  const [reportSim, setReportSim] = useState<SimulacaoCompra|null>(null);
+  const [exportingReport, setExportingReport] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
 
   const [editingRenda, setEditingRenda] = useState(false);
   const [editingInvest, setEditingInvest] = useState(false);
@@ -3451,20 +3458,24 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
   }
 
   async function saveSimulacao() {
-    if (!simForm.nome.trim() || !simForm.valor_total) { setToast({msg:"Preencha nome e valor",type:"error"}); return; }
+    if (!simForm.nome.trim() || !simForm.valor_parcela) { setToast({msg:"Preencha nome e valor da parcela",type:"error"}); return; }
     setSavingSim(true);
+    const parcelaValor = parseFloat(simForm.valor_parcela.replace(",","."));
+    const numParcelas = Math.max(1, parseInt(simForm.parcelas,10) || 1);
     const { error } = await supabase.from("simulacoes_compra").insert({
       nome: simForm.nome.trim(),
-      valor_total: parseFloat(simForm.valor_total.replace(",",".")),
-      parcelas: Math.max(1, parseInt(simForm.parcelas,10) || 1),
+      valor_total: parcelaValor * numParcelas,
+      parcelas: numParcelas,
       primeira_parcela: simForm.primeira_parcela,
+      renda_extra: simForm.renda_extra ? parseFloat(simForm.renda_extra.replace(",",".")) : null,
+      renda_extra_meses: simForm.renda_extra ? Math.max(1, parseInt(simForm.renda_extra_meses,10) || 1) : null,
       user_id: userId,
     });
     setSavingSim(false);
     if (error) { setToast({msg:`Erro: ${error.message}`,type:"error"}); return; }
     setToast({msg:"Simulação salva",type:"success"});
     setShowSimForm(false);
-    setSimForm({ nome:"", valor_total:"", parcelas:"1", primeira_parcela:new Date().toISOString().slice(0,10) });
+    setSimForm({ nome:"", valor_parcela:"", parcelas:"1", primeira_parcela:new Date().toISOString().slice(0,10), renda_extra:"", renda_extra_meses:"1" });
     load();
   }
 
@@ -3474,17 +3485,44 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
     load();
   }
 
-  function projecaoSimulacao(sim: SimulacaoCompra) {
+  // Relatório de 12 meses: renda (base + extra, se dentro da janela), despesas comprometidas
+  // (fixas + cartões + esta parcela, se dentro da janela) e saldo livre resultante.
+  function relatorio12Meses(sim: SimulacaoCompra) {
     const parcelaValor = sim.valor_total / sim.parcelas;
-    const [py, pm] = sim.primeira_parcela.slice(0,7).split("-").map(Number);
-    const primeiraKey = `${py}-${String(pm).padStart(2,"0")}`;
-    const meses: { mes: string; comprometidoAntes: number; comEsta: number }[] = [];
-    for (let i = 0; i < sim.parcelas; i++) {
-      const mKey = addMonthsToKey(primeiraKey, i);
-      const antes = despesasPrevistasParaMes(mKey);
-      meses.push({ mes: mKey, comprometidoAntes: antes, comEsta: antes + parcelaValor });
+    const primeiraKey = sim.primeira_parcela.slice(0,7);
+    const rendaBase = planoAtual?.renda_mensal ?? 0;
+    const investimentoBase = planoAtual?.investimento_mensal ?? 0;
+    const meses: { mes:string; renda:number; despesas:number; investimento:number; saldoLivre:number; parcelaAtiva:boolean; rendaExtraAtiva:boolean }[] = [];
+    for (let i = 0; i < 12; i++) {
+      const mKey = addMonthsToKey(monthKey, i);
+      const mesesDesdePrimeira = monthsBetween(primeiraKey, mKey);
+      const parcelaAtiva = mesesDesdePrimeira >= 0 && mesesDesdePrimeira < sim.parcelas;
+      const rendaExtraAtiva = !!sim.renda_extra && mesesDesdePrimeira >= 0 && mesesDesdePrimeira < (sim.renda_extra_meses ?? 1);
+      const despesasComprometidas = despesasPrevistasParaMes(mKey) + (parcelaAtiva ? parcelaValor : 0);
+      const rendaDoMes = rendaBase + (rendaExtraAtiva ? (sim.renda_extra ?? 0) : 0);
+      meses.push({
+        mes: mKey, renda: rendaDoMes, despesas: despesasComprometidas, investimento: investimentoBase,
+        saldoLivre: rendaDoMes - despesasComprometidas - investimentoBase,
+        parcelaAtiva, rendaExtraAtiva,
+      });
     }
     return { parcelaValor, meses };
+  }
+
+  async function exportarRelatorioPDF() {
+    if (!reportRef.current || !reportSim) return;
+    setExportingReport(true);
+    try {
+      const html2canvas = (await import("html2canvas")).default;
+      const { jsPDF } = await import("jspdf");
+      const canvas = await html2canvas(reportRef.current, { backgroundColor: "#ffffff", scale: 2 });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "px", format: [canvas.width, canvas.height] });
+      pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
+      pdf.save(`simulacao-${reportSim.nome.replace(/\s+/g,"-").toLowerCase()}.pdf`);
+    } finally {
+      setExportingReport(false);
+    }
   }
 
   return (
@@ -3549,35 +3587,27 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
       ) : simulacoes.length === 0 ? (
         <div style={{textAlign:"center",padding:"30px 20px",color:"#86868B"}}>
           <div style={{fontSize:36,marginBottom:8}}>🧮</div>
-          <div style={{fontSize:14}}>Simule uma compra parcelada antes de decidir — veja como ela afetaria seus meses futuros.</div>
+          <div style={{fontSize:14}}>Simule uma compra parcelada antes de decidir — veja como ela afetaria seus próximos 12 meses.</div>
         </div>
       ) : (
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {simulacoes.map(sim => {
-            const { parcelaValor, meses } = projecaoSimulacao(sim);
-            const expanded = expandedSim === sim.id;
+            const parcelaValor = sim.valor_total / sim.parcelas;
             return (
-              <div key={sim.id} style={{background:"#F5F5F7",borderRadius:16,padding:14}}>
-                <div onClick={()=>setExpandedSim(expanded?null:sim.id)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+              <div key={sim.id} onClick={()=>setReportSim(sim)} style={{background:"#F5F5F7",borderRadius:16,padding:14,cursor:"pointer"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <div>
                     <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>{sim.nome}</div>
-                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>{formatBRL(sim.valor_total)} em {sim.parcelas}x de {formatBRL(parcelaValor)}</div>
+                    <div style={{fontSize:12,color:"#86868B",marginTop:2}}>
+                      {formatBRL(sim.valor_total)} em {sim.parcelas}x de {formatBRL(parcelaValor)}
+                      {sim.renda_extra ? ` · +${formatBRL(sim.renda_extra)}/mês por ${sim.renda_extra_meses}x` : ""}
+                    </div>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:10}}>
                     <span onClick={(e)=>{e.stopPropagation();deleteSimulacao(sim.id);}} style={{fontSize:16,cursor:"pointer"}}>🗑️</span>
-                    <span style={{fontSize:13,color:"#007AFF"}}>{expanded?"▲":"▼"}</span>
+                    <span style={{fontSize:13,color:"#007AFF"}}>Ver relatório →</span>
                   </div>
                 </div>
-                {expanded && (
-                  <div style={{marginTop:12,paddingTop:12,borderTop:"0.5px solid #E5E5E7"}}>
-                    {meses.map((m,i) => (
-                      <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:12}}>
-                        <span style={{color:"#86868B"}}>{monthKeyLabel(m.mes)}</span>
-                        <span style={{color:"#1D1D1F"}}>{formatBRL(m.comprometidoAntes)} <strong>→ {formatBRL(m.comEsta)}</strong></span>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             );
           })}
@@ -3609,24 +3639,81 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
             <div style={{fontSize:17,fontWeight:600,marginBottom:16}}>Nova simulação de compra</div>
             <input placeholder="O que você quer comprar?" value={simForm.nome} onChange={e=>setSimForm(f=>({...f,nome:e.target.value}))}
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
-            <input placeholder="Valor total (R$)" value={simForm.valor_total} onChange={e=>setSimForm(f=>({...f,valor_total:e.target.value}))}
-              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
             <div style={{display:"flex",gap:10,marginBottom:10}}>
               <div style={{flex:1}}>
-                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Parcelas</label>
+                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Valor da parcela (R$)</label>
+                <input placeholder="0,00" value={simForm.valor_parcela} onChange={e=>setSimForm(f=>({...f,valor_parcela:e.target.value}))}
+                  style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit"}} />
+              </div>
+              <div style={{flex:1}}>
+                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Quantidade de parcelas</label>
                 <input type="number" min={1} max={48} value={simForm.parcelas} onChange={e=>setSimForm(f=>({...f,parcelas:e.target.value}))}
                   style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit"}} />
               </div>
+            </div>
+            <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Pagamento da 1ª parcela</label>
+            <input type="date" value={simForm.primeira_parcela} onChange={e=>setSimForm(f=>({...f,primeira_parcela:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:14,fontFamily:"inherit"}} />
+
+            <div style={{fontSize:12,color:"#86868B",marginBottom:6,fontWeight:600}}>Renda extra nesse período (opcional)</div>
+            <div style={{display:"flex",gap:10,marginBottom:4}}>
               <div style={{flex:1}}>
-                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>1ª parcela em</label>
-                <input type="date" value={simForm.primeira_parcela} onChange={e=>setSimForm(f=>({...f,primeira_parcela:e.target.value}))}
+                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Valor (R$)</label>
+                <input placeholder="Ex: bônus, 13º" value={simForm.renda_extra} onChange={e=>setSimForm(f=>({...f,renda_extra:e.target.value}))}
+                  style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit"}} />
+              </div>
+              <div style={{flex:1}}>
+                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Quantas vezes</label>
+                <input type="number" min={1} max={12} value={simForm.renda_extra_meses} onChange={e=>setSimForm(f=>({...f,renda_extra_meses:e.target.value}))}
                   style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,fontFamily:"inherit"}} />
               </div>
             </div>
+            <div style={{fontSize:11,color:"#86868B",marginBottom:16}}>Ex: R$ 2.000 por 1 vez (um bônus único), ou R$ 500 por 3 vezes (uma renda extra recorrente).</div>
+
             <button disabled={savingSim} onClick={saveSimulacao} style={{width:"100%",padding:14,background:"#007AFF",color:"#FFF",border:"none",borderRadius:14,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:savingSim?0.6:1}}>
               {savingSim?"Salvando…":"Salvar simulação"}
             </button>
             <button onClick={()=>setShowSimForm(false)} style={{width:"100%",padding:12,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Cancelar</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Modal: relatório de 12 meses da simulação */}
+      {reportSim && createPortal(
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setReportSim(null)}>
+          <div className="modal-sheet-center" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"88vh",overflowY:"auto"}}>
+            {(() => {
+              const { parcelaValor, meses } = relatorio12Meses(reportSim);
+              return (
+                <>
+                  <div ref={reportRef} style={{background:"#FFF",padding:4}}>
+                    <div style={{fontSize:17,fontWeight:700,marginBottom:2}}>{reportSim.nome}</div>
+                    <div style={{fontSize:12,color:"#86868B",marginBottom:16}}>
+                      {formatBRL(reportSim.valor_total)} em {reportSim.parcelas}x de {formatBRL(parcelaValor)} · Relatório de 12 meses
+                    </div>
+                    <div style={{borderTop:"0.5px solid #E5E5E7"}}>
+                      {meses.map((m,i) => (
+                        <div key={i} style={{padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+                          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                            <span style={{fontSize:13,fontWeight:600}}>{monthKeyLabel(m.mes)}</span>
+                            <span style={{fontSize:13,fontWeight:700,color:m.saldoLivre>=0?"#34C759":"#FF3B30"}}>{formatBRL(m.saldoLivre)}</span>
+                          </div>
+                          <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#86868B"}}>
+                            <span>Renda: {formatBRL(m.renda)}{m.rendaExtraAtiva?" (com extra)":""}</span>
+                            <span>Despesas: {formatBRL(m.despesas)}{m.parcelaAtiva?" (com parcela)":""}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <button disabled={exportingReport} onClick={exportarRelatorioPDF} style={{width:"100%",padding:14,marginTop:16,background:"#007AFF",color:"#FFF",border:"none",borderRadius:14,fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:exportingReport?0.6:1}}>
+                    {exportingReport?"Gerando PDF…":"📄 Exportar PDF"}
+                  </button>
+                </>
+              );
+            })()}
+            <button onClick={()=>setReportSim(null)} style={{width:"100%",padding:12,marginTop:8,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Fechar</button>
           </div>
         </div>,
         document.body
