@@ -3958,6 +3958,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const [detailFor, setDetailFor] = useState<Investimento | null>(null);
   const [lancForm, setLancForm] = useState({ mes:new Date().toISOString().slice(0,7), valor_ganho:"", saldo_acumulado:"", observacao:"" });
+  const [opForm, setOpForm] = useState<{tipo:"aporte"|"retirada"|null; valor:string; data:string}>({ tipo:null, valor:"", data:new Date().toISOString().slice(0,10) });
   const [savingLanc, setSavingLanc] = useState(false);
   const [bankFilter, setBankFilter] = useState<string>("Todos");
   const formSheetRef = useRef<HTMLDivElement>(null);
@@ -3981,7 +3982,9 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
 
   const lancamentosFor = (invId: string) => lancamentos.filter(l => l.investimento_id === invId);
   const totalGanhoFor = (invId: string) => lancamentosFor(invId).reduce((s,l)=>s+(l.valor_ganho??0),0);
-  const totalInvestido = investimentos.reduce((s,i)=>s+(i.valor_inicial??0),0);
+  const netAportesFor = (invId: string) => lancamentosFor(invId).reduce((s,l)=>s+(l.valor_operacao??0),0);
+  const saldoAtualFor = (invId: string, valorInicial: number) => valorInicial + totalGanhoFor(invId) + netAportesFor(invId);
+  const totalInvestido = investimentos.reduce((s,i)=>s+saldoAtualFor(i.id, i.valor_inicial??0),0);
   const totalGanho = investimentos.reduce((s,i)=>s+totalGanhoFor(i.id),0);
 
   async function saveInvestimento() {
@@ -4009,6 +4012,21 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
     if (!confirm(`Remover "${inv.nome}" e todo o histórico de rendimentos?`)) return;
     await supabase.from("investimento_lancamentos").delete().eq("investimento_id", inv.id);
     await supabase.from("investimentos").delete().eq("id", inv.id);
+    load();
+  }
+
+  async function saveOperacao(inv: Investimento, tipoOp: "aporte"|"retirada", valor: number, data: string) {
+    const valorOperacao = tipoOp === "aporte" ? valor : -valor;
+    const { error } = await supabase.from("investimento_lancamentos").insert({
+      investimento_id: inv.id,
+      mes: data.slice(0,7),
+      valor_ganho: 0,
+      tipo_operacao: tipoOp,
+      valor_operacao: valorOperacao,
+      data_operacao: data,
+    });
+    if (error) { setToast({msg:`Erro: ${error.message}`,type:"error"}); return; }
+    setToast({msg: tipoOp==="aporte" ? "Aporte registrado" : "Retirada registrada", type:"success"});
     load();
   }
 
@@ -4085,6 +4103,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             {investimentos.filter(inv => bankFilter==="Todos" || (inv.instituicao||"Sem banco")===bankFilter).map(inv => {
             const ganho = totalGanhoFor(inv.id);
+            const saldoAtual = saldoAtualFor(inv.id, inv.valor_inicial??0);
             const rentabilidade = inv.valor_inicial ? (ganho / inv.valor_inicial) * 100 : 0;
             return (
               <div key={inv.id} onClick={()=>setDetailFor(inv)} style={{background:"#F5F5F7",borderRadius:16,padding:14,cursor:"pointer"}}>
@@ -4092,7 +4111,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
                   <div>
                     <div style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>{inv.nome}</div>
                     <div style={{fontSize:12,color:"#86868B",marginTop:2}}>
-                      {inv.tipo}{inv.instituicao?` · ${inv.instituicao}`:""} · aplicado {formatBRL(inv.valor_inicial??0)}
+                      {inv.tipo}{inv.instituicao?` · ${inv.instituicao}`:""} · saldo atual {formatBRL(saldoAtual)}
                       {(inv as any).data_aplicacao ? ` · ${new Date((inv as any).data_aplicacao+"T00:00:00").toLocaleDateString("pt-BR")}` : ""}
                     </div>
                   </div>
@@ -4147,15 +4166,48 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
         document.body
       )}
 
-      {/* Detail: lançamentos mensais */}
+      {/* Detail: extrato do investimento */}
       {detailFor && createPortal(
-        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>setDetailFor(null)}>
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>{setDetailFor(null);setOpForm({tipo:null,valor:"",data:new Date().toISOString().slice(0,10)});}}>
           <div className="modal-sheet-center" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:4}}>{detailFor.nome}</div>
+            <div style={{fontSize:13,color:"#86868B",marginBottom:4}}>Saldo atual: <strong style={{color:"#1D1D1F"}}>{formatBRL(saldoAtualFor(detailFor.id, detailFor.valor_inicial??0))}</strong></div>
             <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>Rendimento acumulado: <strong style={{color:"#34C759"}}>{formatBRL(totalGanhoFor(detailFor.id))}</strong></div>
 
+            {/* Botões rápidos de Aportar/Retirar */}
+            <div style={{display:"flex",gap:10,marginBottom:14}}>
+              <button onClick={()=>setOpForm(f=>({...f,tipo:f.tipo==="aporte"?null:"aporte"}))}
+                style={{flex:1,padding:12,background:opForm.tipo==="aporte"?"#34C759":"#F5F5F7",color:opForm.tipo==="aporte"?"#FFF":"#1D1D1F",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                ⬆️ Aportar
+              </button>
+              <button onClick={()=>setOpForm(f=>({...f,tipo:f.tipo==="retirada"?null:"retirada"}))}
+                style={{flex:1,padding:12,background:opForm.tipo==="retirada"?"#FF3B30":"#F5F5F7",color:opForm.tipo==="retirada"?"#FFF":"#1D1D1F",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                ⬇️ Retirar
+              </button>
+            </div>
+
+            {opForm.tipo && (
+              <div style={{background:"#F5F5F7",borderRadius:14,padding:14,marginBottom:16}}>
+                <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>{opForm.tipo==="aporte"?"Novo aporte":"Retirada/resgate"}</div>
+                <div style={{display:"flex",gap:10,marginBottom:10}}>
+                  <input placeholder="Valor (R$)" value={opForm.valor} onChange={e=>setOpForm(f=>({...f,valor:e.target.value}))}
+                    style={{flex:1,padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,fontFamily:"inherit"}} />
+                  <input type="date" value={opForm.data} onChange={e=>setOpForm(f=>({...f,data:e.target.value}))}
+                    style={{flex:1,padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,fontFamily:"inherit"}} />
+                </div>
+                <button onClick={async ()=>{
+                  const v = parseFloat(opForm.valor.replace(",","."));
+                  if (isNaN(v) || v<=0) { setToast({msg:"Preencha um valor válido",type:"error"}); return; }
+                  await saveOperacao(detailFor, opForm.tipo!, v, opForm.data);
+                  setOpForm({tipo:null, valor:"", data:new Date().toISOString().slice(0,10)});
+                }} style={{width:"100%",padding:11,background:opForm.tipo==="aporte"?"#34C759":"#FF3B30",color:"#FFF",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                  Confirmar {opForm.tipo==="aporte"?"aporte":"retirada"}
+                </button>
+              </div>
+            )}
+
             <div style={{background:"#F5F5F7",borderRadius:14,padding:14,marginBottom:16}}>
-              <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>Lançar saldo acumulado do mês</div>
+              <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>Lançar saldo acumulado do mês (rendimento)</div>
               <input type="month" value={lancForm.mes} onChange={e=>setLancForm(f=>({...f,mes:e.target.value}))}
                 style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,marginBottom:8,fontFamily:"inherit"}} />
               <input placeholder="Saldo acumulado atual (R$)" value={lancForm.saldo_acumulado} onChange={e=>setLancForm(f=>({...f,saldo_acumulado:e.target.value}))}
@@ -4173,27 +4225,36 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
               })()}
               <input placeholder="Observação (opcional)" value={lancForm.observacao} onChange={e=>setLancForm(f=>({...f,observacao:e.target.value}))}
                 style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,marginBottom:10,fontFamily:"inherit"}} />
-              <button disabled={savingLanc} onClick={saveLancamento} style={{width:"100%",padding:11,background:"#34C759",color:"#FFF",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit",opacity:savingLanc?0.6:1}}>
-                {savingLanc?"Salvando…":"Salvar saldo"}
+              <button disabled={savingLanc} onClick={saveLancamento} style={{width:"100%",padding:11,background:"#007AFF",color:"#FFF",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit",opacity:savingLanc?0.6:1}}>
+                {savingLanc?"Salvando…":"Salvar rendimento"}
               </button>
             </div>
 
-            <div style={{fontSize:13,fontWeight:600,color:"#86868B",marginBottom:8}}>Histórico mensal</div>
+            <div style={{fontSize:13,fontWeight:600,color:"#86868B",marginBottom:8}}>Extrato (mais recente primeiro)</div>
             {lancamentosFor(detailFor.id).length === 0 ? (
-              <div style={{fontSize:13,color:"#86868B",padding:"8px 0"}}>Nenhum rendimento registrado ainda.</div>
+              <div style={{fontSize:13,color:"#86868B",padding:"8px 0"}}>Nenhuma movimentação registrada ainda.</div>
             ) : (
-              [...lancamentosFor(detailFor.id)].reverse().map(l => (
-                <div key={l.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
-                  <div>
-                    <div style={{fontSize:13,color:"#1D1D1F"}}>{monthKeyLabel(l.mes)}</div>
-                    <div style={{fontSize:11,color:"#86868B",marginTop:2}}>Saldo: {formatBRL(l.saldo_acumulado ?? 0)}{l.observacao?` · ${l.observacao}`:""}</div>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <span style={{fontSize:14,fontWeight:600,color:l.valor_ganho>=0?"#34C759":"#FF3B30"}}>{formatBRL(l.valor_ganho)}</span>
-                    <span onClick={()=>deleteLancamento(l.id)} style={{cursor:"pointer",fontSize:14}}>🗑️</span>
-                  </div>
-                </div>
-              ))
+              [...lancamentosFor(detailFor.id)]
+                .sort((a,b)=>(b.data_operacao ?? b.mes+"-28").localeCompare(a.data_operacao ?? a.mes+"-28"))
+                .map(l => {
+                  const isOp = !!l.tipo_operacao;
+                  const icon = l.tipo_operacao==="aporte" ? "⬆️" : l.tipo_operacao==="retirada" ? "⬇️" : "📈";
+                  const valorMostrado = isOp ? (l.valor_operacao ?? 0) : l.valor_ganho;
+                  const label = l.tipo_operacao==="aporte" ? "Aporte" : l.tipo_operacao==="retirada" ? "Retirada" : `Rendimento — ${monthKeyLabel(l.mes)}`;
+                  const dataMostrada = l.data_operacao ? new Date(l.data_operacao+"T00:00:00").toLocaleDateString("pt-BR") : monthKeyLabel(l.mes);
+                  return (
+                    <div key={l.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+                      <div>
+                        <div style={{fontSize:13,color:"#1D1D1F"}}>{icon} {label}</div>
+                        <div style={{fontSize:11,color:"#86868B",marginTop:2}}>{dataMostrada}{l.observacao?` · ${l.observacao}`:""}{!isOp && l.saldo_acumulado!=null ? ` · Saldo: ${formatBRL(l.saldo_acumulado)}` : ""}</div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <span style={{fontSize:14,fontWeight:600,color:valorMostrado>=0?"#34C759":"#FF3B30"}}>{valorMostrado>=0?"+":""}{formatBRL(valorMostrado)}</span>
+                        <span onClick={()=>deleteLancamento(l.id)} style={{cursor:"pointer",fontSize:14}}>🗑️</span>
+                      </div>
+                    </div>
+                  );
+                })
             )}
 
             <button onClick={()=>setDetailFor(null)} style={{width:"100%",padding:12,marginTop:16,background:"transparent",color:"#86868B",border:"none",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Fechar</button>

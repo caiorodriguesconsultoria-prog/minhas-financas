@@ -40,6 +40,7 @@ export interface Investimento {
 export interface InvestimentoLancamento {
   id: string; investimento_id: string; mes: string;
   valor_ganho: number; saldo_acumulado?: number | null; observacao?: string | null; created_at?: string;
+  tipo_operacao?: string | null; valor_operacao?: number | null; data_operacao?: string | null;
 }
 export interface SimulacaoCompra {
   id: string; user_id?: string; nome: string; valor_total: number;
