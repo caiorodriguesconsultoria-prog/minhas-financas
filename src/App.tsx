@@ -1007,7 +1007,8 @@ function HomePage({
   }
 
   const [selectedAccSlice, setSelectedAccSlice] = useState<number|null>(null);
-  const accSegments = buildPieSegments(accounts.map(a => ({ label: a.name, value: Math.max(a.balance,0.01), color: getCardColor(a.name) })));
+  const accountsComSaldo = [...accounts].filter(a => Math.abs(a.balance) > 0.001).sort((a,b) => b.balance - a.balance);
+  const accSegments = buildPieSegments(accountsComSaldo.map(a => ({ label: a.name, value: Math.max(a.balance,0.01), color: getCardColor(a.name) })));
 
   return (
     <div className="scroll-content page-fade">
@@ -1037,7 +1038,7 @@ function HomePage({
           )}
 
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {accounts.map((acc, i) => (
+            {accountsComSaldo.map((acc, i) => (
               <div key={acc.id}
                 onClick={()=>setSelectedAccSlice(selectedAccSlice===i?null:i)}
                 style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:selectedAccSlice===i?"#F0F7FF":"#F5F5F7",borderRadius:14,cursor:"pointer",border:selectedAccSlice===i?"1.5px solid #007AFF":"1.5px solid transparent",transition:"all 0.15s"}}>
