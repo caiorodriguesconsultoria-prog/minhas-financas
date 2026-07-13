@@ -4063,6 +4063,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
       tipo_operacao: tipoOp,
       valor_operacao: valorOperacao,
       data_operacao: data,
+      conta_id: contaId,
     });
     if (error) { setToast({msg:`Erro: ${error.message}`,type:"error"}); return; }
 
@@ -4108,8 +4109,22 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
     load();
   }
 
-  async function deleteLancamento(id: string) {
-    await supabase.from("investimento_lancamentos").delete().eq("id", id);
+  async function deleteLancamento(l: InvestimentoLancamento) {
+    if (!confirm("Excluir esse lançamento? Se ele tinha conta vinculada, o saldo dela e a transação espelhada também serão desfeitos.")) return;
+    // Desfaz o efeito no saldo da conta e remove a transação espelhada, se houver
+    if (l.conta_id && l.valor_operacao) {
+      await adjustAccountBalance(l.conta_id, -l.valor_operacao); // reverte o que foi feito
+      const inv = investimentos.find(i => i.id === l.investimento_id);
+      const descricaoEsperada = l.tipo_operacao === "aporte"
+        ? `Aporte em ${inv?.nome}${inv?.instituicao?` (${inv.instituicao})`:""}`
+        : `Baixa de investimento — ${inv?.nome}${inv?.instituicao?` (${inv.instituicao})`:""}`;
+      await supabase.from("transactions").delete()
+        .eq("account_id", l.conta_id).eq("categoria","Investimentos")
+        .eq("data_transacao", l.data_operacao ?? "").eq("descricao", descricaoEsperada);
+    }
+    const { error } = await supabase.from("investimento_lancamentos").delete().eq("id", l.id);
+    if (error) { setToast({msg:`Erro ao excluir: ${error.message}`,type:"error"}); return; }
+    setToast({msg:"Lançamento excluído e efeitos desfeitos",type:"success"});
     load();
   }
 
@@ -4356,7 +4371,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
                         <span style={{fontSize:14,fontWeight:600,color:valorMostrado>=0?"#34C759":"#FF3B30"}}>{valorMostrado>=0?"+":""}{formatBRL(valorMostrado)}</span>
-                        <span onClick={()=>deleteLancamento(l.id)} style={{cursor:"pointer",fontSize:14}}>🗑️</span>
+                        <span onClick={()=>deleteLancamento(l)} style={{cursor:"pointer",fontSize:14}}>🗑️</span>
                       </div>
                     </div>
                   );
