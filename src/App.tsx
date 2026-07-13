@@ -2300,7 +2300,7 @@ function dueDateForMonthKey(monthKey: string, dia: number): string {
   return `${monthKey}-${String(clamped).padStart(2,"0")}`;
 }
 
-function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: string; transactions: NormTx[]; onOpenCartoes: () => void }) {
+function ContasFixasPage({ userId, transactions, accounts, onOpenCartoes }: { userId: string; transactions: NormTx[]; accounts: NormAccount[]; onOpenCartoes: () => void }) {
   const [all, setAll] = useState<BillToPay[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -2311,9 +2311,7 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const [payingBill, setPayingBill] = useState<BillToPay | null>(null);
   const [calendarLink, setCalendarLink] = useState<string | null>(null);
-  const [payForm, setPayForm] = useState({ data_pagamento:"", motivo_atraso:"", juros:"" });
-  const [anexoFile, setAnexoFile] = useState<File | null>(null);
-  const [uploadingAnexo, setUploadingAnexo] = useState(false);
+  const [payForm, setPayForm] = useState({ data_pagamento:"", motivo_atraso:"", juros:"", contaId:"" });
   const [removeAnexo, setRemoveAnexo] = useState(false);
   const formSheetRef = useRef<HTMLDivElement>(null);
 
@@ -2583,20 +2581,38 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
       return;
     }
     setPayingBill(instance);
-    setPayForm({ data_pagamento: todayIso, motivo_atraso: "", juros: String(instance.juros_atraso ?? "") });
+    setPayForm({ data_pagamento: todayIso, motivo_atraso: "", juros: String(instance.juros_atraso ?? ""), contaId: accounts[0]?.id ?? "" });
   }
 
   async function confirmPayment() {
     if (!payingBill) return;
     setSaving(true);
+    const dataPagamento = payForm.data_pagamento || todayIso;
+    const jurosValor = payForm.juros ? parseFloat(payForm.juros.replace(",",".")) : null;
     const { error } = await supabase.from("bills_to_pay").update({
       status: "pago",
-      data_pagamento: payForm.data_pagamento || todayIso,
+      data_pagamento: dataPagamento,
       motivo_atraso: isOverdue(payingBill) ? (payForm.motivo_atraso || null) : null,
-      juros_atraso: payForm.juros ? parseFloat(payForm.juros.replace(",",".")) : null,
+      juros_atraso: jurosValor,
     }).eq("id", payingBill.id);
+    if (error) { setSaving(false); setToast({msg:`Erro ao registrar pagamento: ${error.message}`,type:"error"}); return; }
+
+    // Espelha o pagamento em Transações e ajusta o saldo da conta usada
+    if (payForm.contaId) {
+      const tplRef = templates.find(t => t.id === payingBill.template_id);
+      const meioMap: Record<string,string> = { pix:"pix", boleto:"boleto", cartao:"credito" };
+      const meio = meioMap[tplRef?.forma_pagamento ?? "pix"] ?? "pix";
+      const valorTotal = (payingBill.valor_base ?? 0) + (jurosValor ?? 0);
+      await supabase.from("transactions").insert({
+        user_id: userId, account_id: payForm.contaId,
+        descricao: payingBill.nome, valor: valorTotal, tipo: "despesa",
+        data_transacao: dataPagamento, categoria: payingBill.categoria ?? "Outros",
+        tipo_escopo: "Despesa Familiar", meio_pagamento: meio,
+      });
+      await adjustAccountBalance(payForm.contaId, -valorTotal);
+    }
+
     setSaving(false);
-    if (error) { setToast({msg:`Erro ao registrar pagamento: ${error.message}`,type:"error"}); return; }
     setToast({msg:"Pagamento registrado",type:"success"});
     setPayingBill(null);
     load();
@@ -2884,6 +2900,13 @@ function ContasFixasPage({ userId, transactions, onOpenCartoes }: { userId: stri
             <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Data do pagamento</label>
             <input type="date" value={payForm.data_pagamento} onChange={e=>setPayForm(f=>({...f,data_pagamento:e.target.value}))}
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+
+            <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Pago com qual conta?</label>
+            <select value={payForm.contaId} onChange={e=>setPayForm(f=>({...f,contaId:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit",background:"#FFF"}}>
+              <option value="">Não espelhar em Transações</option>
+              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
 
             {isOverdue(payingBill) && (
               <>
@@ -3958,7 +3981,8 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const [detailFor, setDetailFor] = useState<Investimento | null>(null);
   const [lancForm, setLancForm] = useState({ mes:new Date().toISOString().slice(0,7), valor_ganho:"", saldo_acumulado:"", observacao:"" });
-  const [opForm, setOpForm] = useState<{tipo:"aporte"|"retirada"|null; valor:string; data:string}>({ tipo:null, valor:"", data:new Date().toISOString().slice(0,10) });
+  const [opForm, setOpForm] = useState<{tipo:"aporte"|"retirada"|null; valor:string; data:string; contaId:string}>({ tipo:null, valor:"", data:new Date().toISOString().slice(0,10), contaId:"" });
+  const [showExtratoGeral, setShowExtratoGeral] = useState(false);
   const [savingLanc, setSavingLanc] = useState(false);
   const [bankFilter, setBankFilter] = useState<string>("Todos");
   const formSheetRef = useRef<HTMLDivElement>(null);
@@ -4015,7 +4039,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
     load();
   }
 
-  async function saveOperacao(inv: Investimento, tipoOp: "aporte"|"retirada", valor: number, data: string) {
+  async function saveOperacao(inv: Investimento, tipoOp: "aporte"|"retirada", valor: number, data: string, contaId: string | null) {
     const valorOperacao = tipoOp === "aporte" ? valor : -valor;
     const { error } = await supabase.from("investimento_lancamentos").insert({
       investimento_id: inv.id,
@@ -4026,6 +4050,21 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
       data_operacao: data,
     });
     if (error) { setToast({msg:`Erro: ${error.message}`,type:"error"}); return; }
+
+    // Espelha em Transações (como transferência, não conta como receita/despesa) e ajusta o saldo da conta vinculada
+    if (contaId) {
+      const descricao = tipoOp === "aporte"
+        ? `Aporte em ${inv.nome}${inv.instituicao?` (${inv.instituicao})`:""}`
+        : `Baixa de investimento — ${inv.nome}${inv.instituicao?` (${inv.instituicao})`:""}`;
+      await supabase.from("transactions").insert({
+        user_id: userId, account_id: contaId, descricao, valor,
+        tipo: "transferencia", data_transacao: data,
+        categoria: "Investimentos", tipo_escopo: "Despesa Familiar", meio_pagamento: "pix",
+      });
+      // Aporte tira dinheiro da conta; retirada devolve pra conta
+      await adjustAccountBalance(contaId, tipoOp === "aporte" ? -valor : valor);
+    }
+
     setToast({msg: tipoOp==="aporte" ? "Aporte registrado" : "Retirada registrada", type:"success"});
     load();
   }
@@ -4067,7 +4106,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
       </div>
 
       {investimentos.length > 0 && (
-        <div style={{background:"#F5F5F7",borderRadius:16,padding:16,marginBottom:16,display:"flex",justifyContent:"space-around",textAlign:"center"}}>
+        <div onClick={()=>setShowExtratoGeral(v=>!v)} style={{background:"#F5F5F7",borderRadius:16,padding:16,marginBottom:showExtratoGeral?8:16,display:"flex",justifyContent:"space-around",textAlign:"center",cursor:"pointer"}}>
           <div>
             <div style={{fontSize:12,color:"#86868B",marginBottom:4}}>Total investido</div>
             <div style={{fontSize:16,fontWeight:700,color:"#1D1D1F"}}>{formatBRL(totalInvestido)}</div>
@@ -4076,6 +4115,35 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
             <div style={{fontSize:12,color:"#86868B",marginBottom:4}}>Rendimento acumulado</div>
             <div style={{fontSize:16,fontWeight:700,color:"#34C759"}}>{formatBRL(totalGanho)}</div>
           </div>
+          <div style={{display:"flex",alignItems:"center",color:"#007AFF",fontSize:12}}>{showExtratoGeral?"▲ Ocultar":"▼ Extrato"}</div>
+        </div>
+      )}
+
+      {showExtratoGeral && (
+        <div style={{background:"#FFF",border:"1px solid #E5E5E7",borderRadius:16,padding:14,marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:600,color:"#86868B",marginBottom:8}}>Extrato consolidado (todos os investimentos)</div>
+          {lancamentos.length === 0 ? (
+            <div style={{fontSize:13,color:"#86868B",padding:"8px 0"}}>Nenhuma movimentação registrada ainda.</div>
+          ) : (
+            [...lancamentos]
+              .sort((a,b)=>((b.data_operacao ?? b.mes+"-28")).localeCompare(a.data_operacao ?? a.mes+"-28"))
+              .map(l => {
+                const inv = investimentos.find(i => i.id === l.investimento_id);
+                const isOp = !!l.tipo_operacao;
+                const icon = l.tipo_operacao==="aporte" ? "⬆️" : l.tipo_operacao==="retirada" ? "⬇️" : "📈";
+                const valorMostrado = isOp ? (l.valor_operacao ?? 0) : l.valor_ganho;
+                const dataMostrada = l.data_operacao ? new Date(l.data_operacao+"T00:00:00").toLocaleDateString("pt-BR") : monthKeyLabel(l.mes);
+                return (
+                  <div key={l.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+                    <div>
+                      <div style={{fontSize:12,color:"#1D1D1F"}}>{icon} {inv?.nome ?? "—"}</div>
+                      <div style={{fontSize:11,color:"#86868B",marginTop:1}}>{dataMostrada}</div>
+                    </div>
+                    <span style={{fontSize:13,fontWeight:600,color:valorMostrado>=0?"#34C759":"#FF3B30"}}>{valorMostrado>=0?"+":""}{formatBRL(valorMostrado)}</span>
+                  </div>
+                );
+              })
+          )}
         </div>
       )}
 
@@ -4198,11 +4266,19 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
                   <input type="date" value={opForm.data} onChange={e=>setOpForm(f=>({...f,data:e.target.value}))}
                     style={{flex:1,padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,fontFamily:"inherit"}} />
                 </div>
+                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>
+                  {opForm.tipo==="aporte" ? "De qual conta saiu o dinheiro?" : "Para qual conta vai o dinheiro?"}
+                </label>
+                <select value={opForm.contaId} onChange={e=>setOpForm(f=>({...f,contaId:e.target.value}))}
+                  style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,fontFamily:"inherit",background:"#FFF",marginBottom:10}}>
+                  <option value="">Nenhuma (só registrar no investimento)</option>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
                 <button onClick={async ()=>{
                   const v = parseFloat(opForm.valor.replace(",","."));
                   if (isNaN(v) || v<=0) { setToast({msg:"Preencha um valor válido",type:"error"}); return; }
-                  await saveOperacao(detailFor, opForm.tipo!, v, opForm.data);
-                  setOpForm({tipo:null, valor:"", data:new Date().toISOString().slice(0,10)});
+                  await saveOperacao(detailFor, opForm.tipo!, v, opForm.data, opForm.contaId || null);
+                  setOpForm({tipo:null, valor:"", data:new Date().toISOString().slice(0,10), contaId:""});
                 }} style={{width:"100%",padding:11,background:opForm.tipo==="aporte"?"#34C759":"#FF3B30",color:"#FFF",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
                   Confirmar {opForm.tipo==="aporte"?"aporte":"retirada"}
                 </button>
@@ -4836,7 +4912,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
           <RelatoriosPage key="relatorios" transactions={transactions} bills={bills} loading={loading} />
         )}
         {navPage === "fixas" && (
-          <ContasFixasPage key="fixas" userId={user.id} transactions={transactions} onOpenCartoes={()=>handleNav("cartoes")} />
+          <ContasFixasPage key="fixas" userId={user.id} transactions={transactions} accounts={accounts} onOpenCartoes={()=>handleNav("cartoes")} />
         )}
         {navPage === "cartoes" && (
           <CartoesPage key="cartoes" userId={user.id} transactions={transactions} accounts={accounts} onImported={refetch} />
