@@ -963,10 +963,10 @@ function HomePage({
     (async () => {
       const [invRes, lancRes] = await Promise.all([
         supabase.from("investimentos").select("valor_inicial"),
-        supabase.from("investimento_lancamentos").select("valor_ganho"),
+        supabase.from("investimento_lancamentos").select("valor_ganho, valor_operacao"),
       ]);
       const base = (invRes.data ?? []).reduce((s: number, i: { valor_inicial?: number }) => s + (i.valor_inicial ?? 0), 0);
-      const ganhos = (lancRes.data ?? []).reduce((s: number, l: { valor_ganho?: number }) => s + (l.valor_ganho ?? 0), 0);
+      const ganhos = (lancRes.data ?? []).reduce((s: number, l: { valor_ganho?: number; valor_operacao?: number|null }) => s + (l.valor_ganho ?? 0) + (l.valor_operacao ?? 0), 0);
       setTotalInvestido(base + ganhos);
     })();
     (async () => {
@@ -3981,7 +3981,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const [detailFor, setDetailFor] = useState<Investimento | null>(null);
   const [lancForm, setLancForm] = useState({ mes:new Date().toISOString().slice(0,7), valor_ganho:"", saldo_acumulado:"", observacao:"" });
-  const [opForm, setOpForm] = useState<{tipo:"aporte"|"retirada"|null; valor:string; data:string; contaId:string}>({ tipo:null, valor:"", data:new Date().toISOString().slice(0,10), contaId:"" });
+  const [opForm, setOpForm] = useState<{tipo:"aporte"|"retirada"|"rendimento"|null; valor:string; data:string; contaId:string}>({ tipo:null, valor:"", data:new Date().toISOString().slice(0,10), contaId:"" });
   const [showExtratoGeral, setShowExtratoGeral] = useState(false);
   const [savingLanc, setSavingLanc] = useState(false);
   const [bankFilter, setBankFilter] = useState<string>("Todos");
@@ -4034,8 +4034,23 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
 
   async function deleteInvestimento(inv: Investimento) {
     if (!confirm(`Remover "${inv.nome}" e todo o histórico de rendimentos?`)) return;
-    await supabase.from("investimento_lancamentos").delete().eq("investimento_id", inv.id);
-    await supabase.from("investimentos").delete().eq("id", inv.id);
+    const { error: e1 } = await supabase.from("investimento_lancamentos").delete().eq("investimento_id", inv.id);
+    const { error: e2 } = await supabase.from("investimentos").delete().eq("id", inv.id);
+    if (e1 || e2) { setToast({msg:`Erro ao excluir: ${(e2||e1)?.message}`,type:"error"}); return; }
+    setToast({msg:"Investimento excluído",type:"success"});
+    load();
+  }
+
+  async function saveRendimentoDireto(inv: Investimento, valor: number, data: string) {
+    const { error } = await supabase.from("investimento_lancamentos").insert({
+      investimento_id: inv.id,
+      mes: data.slice(0,7),
+      valor_ganho: valor,
+      data_operacao: data,
+      observacao: "Rendimento",
+    });
+    if (error) { setToast({msg:`Erro: ${error.message}`,type:"error"}); return; }
+    setToast({msg:"Rendimento registrado",type:"success"});
     load();
   }
 
@@ -4245,42 +4260,54 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
             <div style={{fontSize:13,color:"#86868B",marginBottom:4}}>Saldo atual: <strong style={{color:"#1D1D1F"}}>{formatBRL(saldoAtualFor(detailFor.id, detailFor.valor_inicial??0))}</strong></div>
             <div style={{fontSize:13,color:"#86868B",marginBottom:16}}>Rendimento acumulado: <strong style={{color:"#34C759"}}>{formatBRL(totalGanhoFor(detailFor.id))}</strong></div>
 
-            {/* Botões rápidos de Aportar/Retirar */}
-            <div style={{display:"flex",gap:10,marginBottom:14}}>
-              <button onClick={()=>setOpForm(f=>({...f,tipo:f.tipo==="aporte"?null:"aporte"}))}
-                style={{flex:1,padding:12,background:opForm.tipo==="aporte"?"#34C759":"#F5F5F7",color:opForm.tipo==="aporte"?"#FFF":"#1D1D1F",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+            {/* Botões rápidos de Aportar/Retirar/Rendimento */}
+            <div style={{display:"flex",gap:8,marginBottom:14}}>
+              <button onClick={()=>setOpForm(f=>({...f,tipo:f.tipo==="aporte"?null:"aporte",contaId:f.contaId||accounts[0]?.id||""}))}
+                style={{flex:1,padding:12,background:opForm.tipo==="aporte"?"#34C759":"#F5F5F7",color:opForm.tipo==="aporte"?"#FFF":"#1D1D1F",border:"none",borderRadius:12,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
                 ⬆️ Aportar
               </button>
-              <button onClick={()=>setOpForm(f=>({...f,tipo:f.tipo==="retirada"?null:"retirada"}))}
-                style={{flex:1,padding:12,background:opForm.tipo==="retirada"?"#FF3B30":"#F5F5F7",color:opForm.tipo==="retirada"?"#FFF":"#1D1D1F",border:"none",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              <button onClick={()=>setOpForm(f=>({...f,tipo:f.tipo==="retirada"?null:"retirada",contaId:f.contaId||accounts[0]?.id||""}))}
+                style={{flex:1,padding:12,background:opForm.tipo==="retirada"?"#FF3B30":"#F5F5F7",color:opForm.tipo==="retirada"?"#FFF":"#1D1D1F",border:"none",borderRadius:12,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
                 ⬇️ Retirar
+              </button>
+              <button onClick={()=>setOpForm(f=>({...f,tipo:f.tipo==="rendimento"?null:"rendimento"}))}
+                style={{flex:1,padding:12,background:opForm.tipo==="rendimento"?"#007AFF":"#F5F5F7",color:opForm.tipo==="rendimento"?"#FFF":"#1D1D1F",border:"none",borderRadius:12,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                📈 Rendimento
               </button>
             </div>
 
             {opForm.tipo && (
               <div style={{background:"#F5F5F7",borderRadius:14,padding:14,marginBottom:16}}>
-                <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>{opForm.tipo==="aporte"?"Novo aporte":"Retirada/resgate"}</div>
+                <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>{opForm.tipo==="aporte"?"Novo aporte":opForm.tipo==="retirada"?"Retirada/resgate":"Rendimento do período"}</div>
                 <div style={{display:"flex",gap:10,marginBottom:10}}>
                   <input placeholder="Valor (R$)" value={opForm.valor} onChange={e=>setOpForm(f=>({...f,valor:e.target.value}))}
                     style={{flex:1,padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,fontFamily:"inherit"}} />
                   <input type="date" value={opForm.data} onChange={e=>setOpForm(f=>({...f,data:e.target.value}))}
                     style={{flex:1,padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,fontFamily:"inherit"}} />
                 </div>
-                <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>
-                  {opForm.tipo==="aporte" ? "De qual conta saiu o dinheiro?" : "Para qual conta vai o dinheiro?"}
-                </label>
-                <select value={opForm.contaId} onChange={e=>setOpForm(f=>({...f,contaId:e.target.value}))}
-                  style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,fontFamily:"inherit",background:"#FFF",marginBottom:10}}>
-                  <option value="">Nenhuma (só registrar no investimento)</option>
-                  {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
+                {opForm.tipo !== "rendimento" && (
+                  <>
+                    <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>
+                      {opForm.tipo==="aporte" ? "De qual conta saiu o dinheiro?" : "Para qual conta vai o dinheiro?"}
+                    </label>
+                    <select value={opForm.contaId} onChange={e=>setOpForm(f=>({...f,contaId:e.target.value}))}
+                      style={{width:"100%",padding:"10px 12px",border:"1.5px solid #E5E5EA",borderRadius:10,fontSize:14,fontFamily:"inherit",background:"#FFF",marginBottom:10}}>
+                      <option value="">Nenhuma (só registrar no investimento)</option>
+                      {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                  </>
+                )}
+                {opForm.tipo === "rendimento" && (
+                  <div style={{fontSize:11,color:"#86868B",marginBottom:10}}>Isso soma direto ao saldo do investimento, sem mexer em nenhuma conta (é o juro/rendimento ganho, não é dinheiro que saiu de algum lugar).</div>
+                )}
                 <button onClick={async ()=>{
                   const v = parseFloat(opForm.valor.replace(",","."));
                   if (isNaN(v) || v<=0) { setToast({msg:"Preencha um valor válido",type:"error"}); return; }
-                  await saveOperacao(detailFor, opForm.tipo!, v, opForm.data, opForm.contaId || null);
+                  if (opForm.tipo === "rendimento") await saveRendimentoDireto(detailFor, v, opForm.data);
+                  else await saveOperacao(detailFor, opForm.tipo!, v, opForm.data, opForm.contaId || null);
                   setOpForm({tipo:null, valor:"", data:new Date().toISOString().slice(0,10), contaId:""});
-                }} style={{width:"100%",padding:11,background:opForm.tipo==="aporte"?"#34C759":"#FF3B30",color:"#FFF",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-                  Confirmar {opForm.tipo==="aporte"?"aporte":"retirada"}
+                }} style={{width:"100%",padding:11,background:opForm.tipo==="aporte"?"#34C759":opForm.tipo==="retirada"?"#FF3B30":"#007AFF",color:"#FFF",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                  Confirmar {opForm.tipo==="aporte"?"aporte":opForm.tipo==="retirada"?"retirada":"rendimento"}
                 </button>
               </div>
             )}
@@ -4781,15 +4808,15 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
     (async () => {
       const [invRes, lancRes] = await Promise.all([
         supabase.from("investimentos").select("valor_inicial, data_aplicacao"),
-        supabase.from("investimento_lancamentos").select("valor_ganho, mes"),
+        supabase.from("investimento_lancamentos").select("valor_ganho, valor_operacao, mes, data_operacao"),
       ]);
       const aportesNovos = (invRes.data ?? [])
         .filter((i: any) => (i.data_aplicacao ?? "").startsWith(currentMonthKeyMain))
         .reduce((s: number, i: any) => s + (i.valor_inicial ?? 0), 0);
       const lancamentosDoMes = (lancRes.data ?? [])
-        .filter((l: any) => l.mes === currentMonthKeyMain)
-        .reduce((s: number, l: any) => s + (l.valor_ganho ?? 0), 0);
-      setTotalInvestMes(aportesNovos + Math.max(lancamentosDoMes, 0));
+        .filter((l: any) => ((l.data_operacao ?? l.mes+"-01") as string).startsWith(currentMonthKeyMain))
+        .reduce((s: number, l: any) => s + (l.valor_ganho ?? 0) + (l.valor_operacao ?? 0), 0);
+      setTotalInvestMes(aportesNovos + lancamentosDoMes);
     })();
   }, [currentMonthKeyMain]);
 
