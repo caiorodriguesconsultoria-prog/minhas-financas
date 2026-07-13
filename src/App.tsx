@@ -4822,16 +4822,12 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   useEffect(() => {
     (async () => {
       const [invRes, lancRes] = await Promise.all([
-        supabase.from("investimentos").select("valor_inicial, data_aplicacao"),
-        supabase.from("investimento_lancamentos").select("valor_ganho, valor_operacao, mes, data_operacao"),
+        supabase.from("investimentos").select("valor_inicial"),
+        supabase.from("investimento_lancamentos").select("valor_ganho, valor_operacao"),
       ]);
-      const aportesNovos = (invRes.data ?? [])
-        .filter((i: any) => (i.data_aplicacao ?? "").startsWith(currentMonthKeyMain))
-        .reduce((s: number, i: any) => s + (i.valor_inicial ?? 0), 0);
-      const lancamentosDoMes = (lancRes.data ?? [])
-        .filter((l: any) => ((l.data_operacao ?? l.mes+"-01") as string).startsWith(currentMonthKeyMain))
-        .reduce((s: number, l: any) => s + (l.valor_ganho ?? 0) + (l.valor_operacao ?? 0), 0);
-      setTotalInvestMes(aportesNovos + lancamentosDoMes);
+      const base = (invRes.data ?? []).reduce((s: number, i: any) => s + (i.valor_inicial ?? 0), 0);
+      const movimentos = (lancRes.data ?? []).reduce((s: number, l: any) => s + (l.valor_ganho ?? 0) + (l.valor_operacao ?? 0), 0);
+      setTotalInvestMes(base + movimentos);
     })();
   }, [currentMonthKeyMain]);
 
