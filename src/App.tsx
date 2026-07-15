@@ -3983,6 +3983,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
   const [lancForm, setLancForm] = useState({ mes:new Date().toISOString().slice(0,7), valor_ganho:"", saldo_acumulado:"", observacao:"" });
   const [opForm, setOpForm] = useState<{tipo:"aporte"|"retirada"|"rendimento"|null; valor:string; data:string; contaId:string}>({ tipo:null, valor:"", data:new Date().toISOString().slice(0,10), contaId:"" });
   const [showExtratoGeral, setShowExtratoGeral] = useState(false);
+  const [savingOp, setSavingOp] = useState(false);
   const [savingLanc, setSavingLanc] = useState(false);
   const [bankFilter, setBankFilter] = useState<string>("Todos");
   const formSheetRef = useRef<HTMLDivElement>(null);
@@ -4072,13 +4073,20 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
       const descricao = tipoOp === "aporte"
         ? `Aporte em ${inv.nome}${inv.instituicao?` (${inv.instituicao})`:""}`
         : `Baixa de investimento — ${inv.nome}${inv.instituicao?` (${inv.instituicao})`:""}`;
-      await supabase.from("transactions").insert({
+      const { error: txErr } = await supabase.from("transactions").insert({
         user_id: userId, account_id: contaId, descricao, valor,
         tipo: "transferencia", data_transacao: data,
         categoria: "Investimentos", tipo_escopo: "Despesa Familiar", meio_pagamento: "pix",
       });
+      if (txErr) {
+        // Não ajusta o saldo se a transação não pôde ser criada — evita saldo desalinhado do extrato
+        setToast({msg:`Lançamento salvo, mas não sincronizou com Transações/saldo: ${txErr.message}`, type:"error"});
+        load();
+        return;
+      }
       // Aporte tira dinheiro da conta; retirada devolve pra conta
-      await adjustAccountBalance(contaId, tipoOp === "aporte" ? -valor : valor);
+      const balErr = await adjustAccountBalance(contaId, tipoOp === "aporte" ? -valor : valor);
+      if (balErr) { setToast({msg:`Transação criada, mas o saldo não atualizou: ${balErr}`, type:"error"}); load(); return; }
     }
 
     setToast({msg: tipoOp==="aporte" ? "Aporte registrado" : "Retirada registrada", type:"success"});
@@ -4315,14 +4323,16 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
                 {opForm.tipo === "rendimento" && (
                   <div style={{fontSize:11,color:"#86868B",marginBottom:10}}>Isso soma direto ao saldo do investimento, sem mexer em nenhuma conta (é o juro/rendimento ganho, não é dinheiro que saiu de algum lugar).</div>
                 )}
-                <button onClick={async ()=>{
+                <button disabled={savingOp} onClick={async ()=>{
                   const v = parseFloat(opForm.valor.replace(",","."));
                   if (isNaN(v) || v<=0) { setToast({msg:"Preencha um valor válido",type:"error"}); return; }
+                  setSavingOp(true);
                   if (opForm.tipo === "rendimento") await saveRendimentoDireto(detailFor, v, opForm.data);
                   else await saveOperacao(detailFor, opForm.tipo!, v, opForm.data, opForm.contaId || null);
+                  setSavingOp(false);
                   setOpForm({tipo:null, valor:"", data:new Date().toISOString().slice(0,10), contaId:""});
-                }} style={{width:"100%",padding:11,background:opForm.tipo==="aporte"?"#34C759":opForm.tipo==="retirada"?"#FF3B30":"#007AFF",color:"#FFF",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-                  Confirmar {opForm.tipo==="aporte"?"aporte":opForm.tipo==="retirada"?"retirada":"rendimento"}
+                }} style={{width:"100%",padding:11,background:opForm.tipo==="aporte"?"#34C759":opForm.tipo==="retirada"?"#FF3B30":"#007AFF",color:"#FFF",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:savingOp?"default":"pointer",fontFamily:"inherit",opacity:savingOp?0.6:1}}>
+                  {savingOp ? "Salvando…" : `Confirmar ${opForm.tipo==="aporte"?"aporte":opForm.tipo==="retirada"?"retirada":"rendimento"}`}
                 </button>
               </div>
             )}
