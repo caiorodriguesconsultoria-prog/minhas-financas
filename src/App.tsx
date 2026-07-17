@@ -4974,8 +4974,23 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   const totalIncome  = transactionsThisMonthMain.filter(t=>t.type==="income").reduce((s,t)=>s+t.value,0);
   const totalExpense = transactionsThisMonthMain.filter(t=>t.type==="expense").reduce((s,t)=>s+t.value,0);
   const totalSaidas      = transactionsThisMonthMain.filter(t=>t.type==="expense" && t.meio_pagamento!=="credito").reduce((s,t)=>s+t.value,0);
-  const totalCartaoMes   = transactionsThisMonthMain.filter(t=>t.meio_pagamento==="credito" && t.type!=="transfer").reduce((s,t)=>s+t.value,0);
   const saldo        = totalIncome - totalExpense;
+
+  // Total do cartão de crédito este mês — usa o mesmo cálculo de fatura (por data de fechamento + parcelas) que a aba Cartões usa,
+  // em vez de somar pela data bruta da transação (que não sabe distribuir parcelas corretamente).
+  const [totalCartaoMes, setTotalCartaoMes] = useState(0);
+  useEffect(() => {
+    (async () => {
+      const [cardsRes, linkedRes] = await Promise.all([
+        supabase.from("bills_to_pay").select("id, dia_fechamento").eq("recorrente", true).not("dia_fechamento", "is", null),
+        supabase.from("bills_to_pay").select("*").not("cartao_vinculado_id", "is", null),
+      ]);
+      const cardsList = (cardsRes.data ?? []) as { id:string; dia_fechamento:number }[];
+      const linkedBills = (linkedRes.data ?? []) as BillToPay[];
+      const total = cardsList.reduce((s, c) => s + invoiceTotalFor(c.id, currentMonthKeyMain, transactions, c.dia_fechamento ?? 1, linkedBills).total, 0);
+      setTotalCartaoMes(total);
+    })();
+  }, [currentMonthKeyMain, transactions]);
 
   // Total investido este mês — vem da aba Investimentos (aportes iniciais + lançamentos do mês), não de "transactions"
   const [totalInvestMes, setTotalInvestMes] = useState(0);
