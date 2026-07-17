@@ -1231,8 +1231,8 @@ function HomePage({
 
 // ─── Nova Transação modal ─────────────────────────────────────────────────────
 
-interface TxForm { name:string; value:string; category:string; date:string; accountId:string; tipo:"receita"|"despesa"|"transferencia"; beneficiario_real:string; meio_pagamento:string; tipo_escopo:string; contaDestinoId:string; }
-const EMPTY_FORM: TxForm = { name:"", value:"", category:"", date:"", accountId:"", tipo:"despesa", beneficiario_real:"", meio_pagamento:"Pix", tipo_escopo:"Despesa Familiar", contaDestinoId:"" };
+interface TxForm { name:string; value:string; category:string; date:string; accountId:string; tipo:"receita"|"despesa"|"transferencia"|"investimento"|"pagamento_fixa"; beneficiario_real:string; meio_pagamento:string; tipo_escopo:string; contaDestinoId:string; investimentoId:string; investimentoOp:"aporte"|"retirada"; billId:string; }
+const EMPTY_FORM: TxForm = { name:"", value:"", category:"", date:"", accountId:"", tipo:"despesa", beneficiario_real:"", meio_pagamento:"Pix", tipo_escopo:"Despesa Familiar", contaDestinoId:"", investimentoId:"", investimentoOp:"aporte", billId:"" };
 
 // Ajusta o saldo de uma conta somando/subtraindo um valor (usado ao criar/editar/excluir transações,
 // pra manter o saldo da conta sempre refletindo os lançamentos automaticamente).
@@ -1323,10 +1323,15 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
   const [anexoFile,   setAnexoFile]   = useState<File | null>(null);
   const [uploadingAnexo, setUploadingAnexo] = useState(false);
   const [cards, setCards] = useState<{id:string; nome:string}[]>([]);
+  const [investimentosDisponiveis, setInvestimentosDisponiveis] = useState<{id:string; nome:string; instituicao:string|null}[]>([]);
   useEffect(() => {
     (async () => {
       const { data } = await supabase.from("bills_to_pay").select("id, nome").eq("recorrente", true).not("dia_fechamento", "is", null);
       setCards((data ?? []) as {id:string; nome:string}[]);
+    })();
+    (async () => {
+      const { data } = await supabase.from("investimentos").select("id, nome, instituicao");
+      setInvestimentosDisponiveis((data ?? []) as {id:string; nome:string; instituicao:string|null}[]);
     })();
   }, []);
 
@@ -1391,6 +1396,58 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
   }
 
   async function handleSave() {
+    if (form.tipo === "investimento") {
+      if (!form.investimentoId || !form.value || !form.date) { setErr("Selecione o investimento, valor e data."); return; }
+      if (noAccounts) { setErr("Nenhuma conta disponível."); return; }
+      setSaving(true); setErr(null);
+      const inv = investimentosDisponiveis.find(i => i.id === form.investimentoId);
+      const valor = parseFloat(form.value);
+      const valorOperacao = form.investimentoOp === "aporte" ? valor : -valor;
+      const { error: lancErr } = await supabase.from("investimento_lancamentos").insert({
+        investimento_id: form.investimentoId, mes: form.date.slice(0,7), valor_ganho: 0,
+        tipo_operacao: form.investimentoOp, valor_operacao: valorOperacao,
+        data_operacao: form.date, conta_id: form.accountId,
+      });
+      if (lancErr) { setSaving(false); setErr(`Erro: ${lancErr.message}`); return; }
+      const descricaoInv = form.investimentoOp === "aporte"
+        ? `Aporte em ${inv?.nome}${inv?.instituicao?` (${inv.instituicao})`:""}`
+        : `Baixa de investimento — ${inv?.nome}${inv?.instituicao?` (${inv.instituicao})`:""}`;
+      const { error: txErr } = await supabase.from("transactions").insert({
+        user_id: userId, account_id: form.accountId, descricao: descricaoInv, valor,
+        tipo: "transferencia", data_transacao: form.date,
+        categoria: "Investimentos", tipo_escopo: "Despesa Familiar", meio_pagamento: "pix",
+      });
+      if (txErr) { setSaving(false); setErr(`Lançamento salvo, mas não sincronizou com Transações: ${txErr.message}`); return; }
+      const balErr = await adjustAccountBalance(form.accountId, form.investimentoOp === "aporte" ? -valor : valor);
+      setSaving(false);
+      if (balErr) { setErr(`Transação criada, mas o saldo não atualizou: ${balErr}`); return; }
+      onSaved(); onClose();
+      return;
+    }
+
+    if (form.tipo === "pagamento_fixa") {
+      if (!form.billId || !form.value || !form.date) { setErr("Selecione a conta pendente, valor e data."); return; }
+      if (noAccounts) { setErr("Nenhuma conta disponível."); return; }
+      setSaving(true); setErr(null);
+      const bill = bills.find(b => b.id === form.billId);
+      const valor = parseFloat(form.value);
+      const { error: billErr } = await supabase.from("bills_to_pay").update({
+        status: "pago", data_pagamento: form.date,
+      }).eq("id", form.billId);
+      if (billErr) { setSaving(false); setErr(`Erro: ${billErr.message}`); return; }
+      const { error: txErr } = await supabase.from("transactions").insert({
+        user_id: userId, account_id: form.accountId, descricao: bill?.nome ?? "Conta paga", valor,
+        tipo: "despesa", data_transacao: form.date, categoria: bill?.categoria ?? "Outros",
+        tipo_escopo: "Despesa Familiar", meio_pagamento: "boleto",
+      });
+      if (txErr) { setSaving(false); setErr(`Pagamento salvo, mas não sincronizou com Transações: ${txErr.message}`); return; }
+      const balErr = await adjustAccountBalance(form.accountId, -valor);
+      setSaving(false);
+      if (balErr) { setErr(`Transação criada, mas o saldo não atualizou: ${balErr}`); return; }
+      onSaved(); onClose();
+      return;
+    }
+
     const descricao = buildDescricao();
     if (!descricao || !form.value || !form.date) {
       setErr("Preencha todos os campos obrigatórios antes de salvar.");
@@ -1480,15 +1537,61 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
           </div>
         )}
 
-        {/* Tipo Despesa/Receita/Transferência */}
+        {/* Tipo Despesa/Receita/Transferência/Investimento/Pagar conta */}
         <div className="form-field">
           <label className="form-label">Tipo</label>
-          <div className="type-toggle">
+          <div className="type-toggle" style={{flexWrap:"wrap",gap:6}}>
             <button className={`type-btn${form.tipo==="despesa"?" expense":""}`} onClick={()=>setForm(f=>({...f,tipo:"despesa"}))}>⬇ Despesa</button>
             <button className={`type-btn${form.tipo==="receita"?" income":""}`}  onClick={()=>setForm(f=>({...f,tipo:"receita"}))}>⬆ Receita</button>
             <button className={`type-btn${form.tipo==="transferencia"?" income":""}`} style={form.tipo==="transferencia"?{background:"#8E8E93",borderColor:"#8E8E93"}:{}} onClick={()=>setForm(f=>({...f,tipo:"transferencia"}))}>⇄ Transferência</button>
+            <button className={`type-btn${form.tipo==="investimento"?" income":""}`} style={form.tipo==="investimento"?{background:"#34C759",borderColor:"#34C759"}:{}} onClick={()=>setForm(f=>({...f,tipo:"investimento"}))}>📈 Investimento</button>
+            <button className={`type-btn${form.tipo==="pagamento_fixa"?" income":""}`} style={form.tipo==="pagamento_fixa"?{background:"#FF9500",borderColor:"#FF9500"}:{}} onClick={()=>setForm(f=>({...f,tipo:"pagamento_fixa"}))}>📌 Pagar Conta Fixa</button>
           </div>
         </div>
+
+        {/* ── INVESTIMENTO: escolher qual, aporte/retirada, conta ── */}
+        {form.tipo === "investimento" && (
+          <>
+            <div style={{fontSize:12,color:"#86868B",marginBottom:12,lineHeight:1.5}}>
+              Isso lança direto no extrato do investimento e sincroniza com o saldo da conta escolhida — igual fazer pela aba Investimentos.
+            </div>
+            <div className="form-field">
+              <label className="form-label">Qual investimento?</label>
+              <select className="form-input" value={form.investimentoId} onChange={e=>setForm(f=>({...f,investimentoId:e.target.value}))}>
+                <option value="">Selecione…</option>
+                {investimentosDisponiveis.map(i => <option key={i.id} value={i.id}>{i.nome}{i.instituicao?` (${i.instituicao})`:""}</option>)}
+              </select>
+            </div>
+            <div className="form-field">
+              <label className="form-label">Operação</label>
+              <div className="type-toggle">
+                <button className={`type-btn${form.investimentoOp==="aporte"?" income":""}`} style={form.investimentoOp==="aporte"?{background:"#34C759",borderColor:"#34C759"}:{}} onClick={()=>setForm(f=>({...f,investimentoOp:"aporte"}))}>⬆️ Aportar</button>
+                <button className={`type-btn${form.investimentoOp==="retirada"?" expense":""}`} onClick={()=>setForm(f=>({...f,investimentoOp:"retirada"}))}>⬇️ Retirar</button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ── PAGAR CONTA FIXA: escolher qual pendência ── */}
+        {form.tipo === "pagamento_fixa" && (
+          <>
+            <div style={{fontSize:12,color:"#86868B",marginBottom:12,lineHeight:1.5}}>
+              Isso marca a conta como paga em Fixas e já desconta do saldo da conta escolhida — igual fazer pela aba Fixas.
+            </div>
+            <div className="form-field">
+              <label className="form-label">Qual conta pendente?</label>
+              <select className="form-input" value={form.billId} onChange={e=>{
+                const bill = bills.find(b=>b.id===e.target.value);
+                setForm(f=>({...f, billId:e.target.value, value: bill ? String(bill.valor_base ?? "") : f.value, name: bill?.nome ?? f.name}));
+              }}>
+                <option value="">Selecione…</option>
+                {bills.filter(b => !b.recorrente && !b.dia_fechamento && (b.status??"").toLowerCase()!=="pago" && b.data_vencimento).map(b =>
+                  <option key={b.id} value={b.id}>{b.nome} — {formatBRL(b.valor_base??0)} (vence {b.data_vencimento ? new Date(b.data_vencimento+"T00:00:00").toLocaleDateString("pt-BR"):""})</option>
+                )}
+              </select>
+            </div>
+          </>
+        )}
 
         {/* ── TRANSFERÊNCIA: conta origem/destino ── */}
         {form.tipo === "transferencia" && (
