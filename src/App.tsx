@@ -4980,11 +4980,14 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   // em vez de somar pela data bruta da transação (que não sabe distribuir parcelas corretamente).
   const [totalCartaoMes, setTotalCartaoMes] = useState(0);
   useEffect(() => {
+    if (transactions.length === 0) return; // evita zerar antes dos dados carregarem
     (async () => {
       const [cardsRes, linkedRes] = await Promise.all([
         supabase.from("bills_to_pay").select("id, dia_fechamento").eq("recorrente", true).not("dia_fechamento", "is", null),
         supabase.from("bills_to_pay").select("*").not("cartao_vinculado_id", "is", null),
       ]);
+      if (cardsRes.error) { console.error("Erro ao buscar cartões:", cardsRes.error); return; }
+      if (linkedRes.error) { console.error("Erro ao buscar contas vinculadas:", linkedRes.error); }
       const cardsList = (cardsRes.data ?? []) as { id:string; dia_fechamento:number }[];
       const linkedBills = (linkedRes.data ?? []) as BillToPay[];
       const total = cardsList.reduce((s, c) => s + invoiceTotalFor(c.id, currentMonthKeyMain, transactions, c.dia_fechamento ?? 1, linkedBills).total, 0);
