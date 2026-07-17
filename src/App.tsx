@@ -2587,7 +2587,7 @@ function ContasFixasPage({ userId, transactions, accounts, onOpenCartoes }: { us
   }
 
   async function confirmPayment() {
-    if (!payingBill) return;
+    if (!payingBill || saving) return;
     setSaving(true);
     const dataPagamento = payForm.data_pagamento || todayIso;
     const jurosValor = payForm.juros ? parseFloat(payForm.juros.replace(",",".")) : null;
@@ -2605,13 +2605,23 @@ function ContasFixasPage({ userId, transactions, accounts, onOpenCartoes }: { us
       const meioMap: Record<string,string> = { pix:"pix", boleto:"boleto", cartao:"credito" };
       const meio = meioMap[tplRef?.forma_pagamento ?? "pix"] ?? "pix";
       const valorTotal = (payingBill.valor_base ?? 0) + (jurosValor ?? 0);
-      await supabase.from("transactions").insert({
+      const { error: txErr } = await supabase.from("transactions").insert({
         user_id: userId, account_id: payForm.contaId,
         descricao: payingBill.nome, valor: valorTotal, tipo: "despesa",
         data_transacao: dataPagamento, categoria: payingBill.categoria ?? "Outros",
         tipo_escopo: "Despesa Familiar", meio_pagamento: meio,
       });
-      await adjustAccountBalance(payForm.contaId, -valorTotal);
+      if (txErr) {
+        setSaving(false);
+        setToast({msg:`Pagamento salvo, mas não sincronizou com Transações/saldo: ${txErr.message}`, type:"error"});
+        setPayingBill(null); load(); return;
+      }
+      const balErr = await adjustAccountBalance(payForm.contaId, -valorTotal);
+      if (balErr) {
+        setSaving(false);
+        setToast({msg:`Transação criada, mas o saldo não atualizou: ${balErr}`, type:"error"});
+        setPayingBill(null); load(); return;
+      }
     }
 
     setSaving(false);
@@ -2990,7 +3000,7 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{msg:string;type:"success"|"error"}|null>(null);
   const [payingBill, setPayingBill] = useState<BillToPay | null>(null);
-  const [payForm, setPayForm] = useState({ data_pagamento:"", motivo_atraso:"", juros:"" });
+  const [payForm, setPayForm] = useState({ data_pagamento:"", motivo_atraso:"", juros:"", contaId:"" });
   const [showImportFatura, setShowImportFatura] = useState(false);
   const [selectedCardSlice, setSelectedCardSlice] = useState<number|null>(null);
   const [detailCard, setDetailCard] = useState<BillToPay | null>(null);
@@ -3090,7 +3100,7 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
       return;
     }
     setPayingBill(instance);
-    setPayForm({ data_pagamento: todayIso, motivo_atraso: "", juros: String(instance.juros_atraso ?? "") });
+    setPayForm({ data_pagamento: todayIso, motivo_atraso: "", juros: String(instance.juros_atraso ?? ""), contaId: accounts[0]?.id ?? "" });
   }
 
   async function updateInvoiceValue(instance: BillToPay, newValue: number) {
@@ -3117,16 +3127,42 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
   }
 
   async function confirmPayment() {
-    if (!payingBill) return;
+    if (!payingBill || saving) return;
     setSaving(true);
+    const dataPagamento = payForm.data_pagamento || todayIso;
+    const jurosValor = payForm.juros ? parseFloat(payForm.juros.replace(",",".")) : null;
     const { error } = await supabase.from("bills_to_pay").update({
       status: "pago",
-      data_pagamento: payForm.data_pagamento || todayIso,
+      data_pagamento: dataPagamento,
       motivo_atraso: isOverdue(payingBill) ? (payForm.motivo_atraso || null) : null,
-      juros_atraso: payForm.juros ? parseFloat(payForm.juros.replace(",",".")) : null,
+      juros_atraso: jurosValor,
     }).eq("id", payingBill.id);
+    if (error) { setSaving(false); setToast({msg:`Erro ao registrar pagamento: ${error.message}`,type:"error"}); return; }
+
+    // Espelha o pagamento da fatura em Transações e ajusta o saldo da conta usada
+    if (payForm.contaId) {
+      const cardRef = cards.find(c => c.id === payingBill.template_id);
+      const valorTotal = (payingBill.valor_base ?? 0) + (jurosValor ?? 0);
+      const { error: txErr } = await supabase.from("transactions").insert({
+        user_id: userId, account_id: payForm.contaId,
+        descricao: `Pagamento fatura — ${cardRef?.nome ?? payingBill.nome}`, valor: valorTotal, tipo: "despesa",
+        data_transacao: dataPagamento, categoria: "Cartão de Crédito",
+        tipo_escopo: "Despesa Familiar", meio_pagamento: "pix",
+      });
+      if (txErr) {
+        setSaving(false);
+        setToast({msg:`Pagamento salvo, mas não sincronizou com Transações/saldo: ${txErr.message}`, type:"error"});
+        setPayingBill(null); load(); return;
+      }
+      const balErr = await adjustAccountBalance(payForm.contaId, -valorTotal);
+      if (balErr) {
+        setSaving(false);
+        setToast({msg:`Transação criada, mas o saldo não atualizou: ${balErr}`, type:"error"});
+        setPayingBill(null); load(); return;
+      }
+    }
+
     setSaving(false);
-    if (error) { setToast({msg:`Erro ao registrar pagamento: ${error.message}`,type:"error"}); return; }
     setToast({msg:"Pagamento registrado",type:"success"});
     setPayingBill(null);
     load();
@@ -3336,6 +3372,13 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
             <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Data do pagamento</label>
             <input type="date" value={payForm.data_pagamento} onChange={e=>setPayForm(f=>({...f,data_pagamento:e.target.value}))}
               style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit"}} />
+
+            <label style={{fontSize:12,color:"#86868B",display:"block",marginBottom:4}}>Pago com qual conta?</label>
+            <select value={payForm.contaId} onChange={e=>setPayForm(f=>({...f,contaId:e.target.value}))}
+              style={{width:"100%",padding:"12px 14px",border:"1.5px solid #E5E5EA",borderRadius:12,fontSize:15,marginBottom:10,fontFamily:"inherit",background:"#FFF"}}>
+              <option value="">Não espelhar em Transações</option>
+              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
 
             {isOverdue(payingBill) && (
               <>
