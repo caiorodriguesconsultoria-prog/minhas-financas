@@ -2313,6 +2313,8 @@ function ContasFixasPage({ userId, transactions, accounts, onOpenCartoes }: { us
   const [calendarLink, setCalendarLink] = useState<string | null>(null);
   const [payForm, setPayForm] = useState({ data_pagamento:"", motivo_atraso:"", juros:"", contaId:"" });
   const [removeAnexo, setRemoveAnexo] = useState(false);
+  const [anexoFile, setAnexoFile] = useState<File | null>(null);
+  const [uploadingAnexo, setUploadingAnexo] = useState(false);
   const formSheetRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -4140,7 +4142,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
     <div className="scroll-content page-fade">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <div className="section-title" style={{margin:0}}>Investimentos</div>
-        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",tipo:TIPOS_INVESTIMENTO[0],valor_inicial:"",instituicao:"",instituicaoOutro:""});setShowForm(true);}}>+ Novo</span>
+        <span className="section-link" onClick={()=>{setEditing(null);setForm({nome:"",tipo:TIPOS_INVESTIMENTO[0],valor_inicial:"",instituicao:"",instituicaoOutro:"",dataAplicacao:new Date().toISOString().slice(0,10)});setShowForm(true);}}>+ Novo</span>
       </div>
 
       {investimentos.length > 0 && (
@@ -4277,7 +4279,7 @@ function InvestimentosPage({ userId, accounts }: { userId: string; accounts: Nor
 
       {/* Detail: extrato do investimento */}
       {detailFor && createPortal(
-        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>{setDetailFor(null);setOpForm({tipo:null,valor:"",data:new Date().toISOString().slice(0,10)});}}>
+        <div className="modal-backdrop" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:200}} onClick={()=>{setDetailFor(null);setOpForm({tipo:null,valor:"",data:new Date().toISOString().slice(0,10),contaId:""});}}>
           <div className="modal-sheet-center" onClick={e=>e.stopPropagation()} style={{background:"#FFF",width:"100%",maxWidth:600,margin:"0 auto",borderRadius:20,padding:20,maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{fontSize:17,fontWeight:600,marginBottom:4}}>{detailFor.nome}</div>
             <div style={{fontSize:13,color:"#86868B",marginBottom:4}}>Saldo atual: <strong style={{color:"#1D1D1F"}}>{formatBRL(saldoAtualFor(detailFor.id, detailFor.valor_inicial??0))}</strong></div>
