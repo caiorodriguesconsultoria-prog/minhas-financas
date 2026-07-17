@@ -1241,7 +1241,9 @@ async function adjustAccountBalance(accountId: string | null | undefined, delta:
   const { data, error: selErr } = await supabase.from("accounts").select("saldo_inicial").eq("id", accountId).single();
   if (selErr) { console.error("Erro ao ler saldo da conta:", selErr); return selErr.message; }
   const atual = data?.saldo_inicial ?? 0;
-  const { error: updErr } = await supabase.from("accounts").update({ saldo_inicial: atual + delta }).eq("id", accountId);
+  // Arredonda em 2 casas decimais pra evitar imprecisão de ponto flutuante acumulando com muitos lançamentos
+  const novoSaldo = Math.round((atual + delta) * 100) / 100;
+  const { error: updErr } = await supabase.from("accounts").update({ saldo_inicial: novoSaldo }).eq("id", accountId);
   if (updErr) { console.error("Erro ao atualizar saldo da conta:", updErr); return updErr.message; }
   return null;
 }
