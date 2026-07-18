@@ -1524,7 +1524,11 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
 
     let anexoUrl: string | null = null;
     let anexoNome: string | null = null;
-    if (anexoFile) {
+    if (anexoFile && anexoFile.size === 0) {
+      // Falha comum do Safari/iOS com fotos recém-tiradas pela câmera: o arquivo chega vazio.
+      // Não trava o salvamento da transação por causa disso — só avisa e segue sem anexo.
+      setErr("O anexo não pôde ser lido (comum com fotos recém-tiradas pela câmera) — a transação foi salva sem ele. Tente anexar de novo depois, escolhendo da galeria.");
+    } else if (anexoFile) {
       setUploadingAnexo(true);
       const path = `${userId}/${Date.now()}-${anexoFile.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
       const { error: upErr } = await supabase.storage.from("anexos").upload(path, anexoFile);
@@ -1906,7 +1910,9 @@ function EditTransacaoModal({ tx, onClose, onSaved, onDeleted, accounts }: {
     setSaving(true); setErr(null);
 
     let anexoUpdate: Record<string, unknown> = {};
-    if (anexoFile) {
+    if (anexoFile && anexoFile.size === 0) {
+      setErr("O anexo não pôde ser lido (comum com fotos recém-tiradas pela câmera) — a transação foi salva sem ele. Tente anexar de novo depois, escolhendo da galeria.");
+    } else if (anexoFile) {
       setUploadingAnexo(true);
       const path = `${tx.user_id ?? "sem-usuario"}/${Date.now()}-${anexoFile.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
       const { error: upErr } = await supabase.storage.from("anexos").upload(path, anexoFile);
@@ -2608,7 +2614,9 @@ function ContasFixasPage({ userId, transactions, accounts, onOpenCartoes }: { us
 
     let anexoUrl: string | null = null;
     let anexoNome: string | null = null;
-    if (anexoFile) {
+    if (anexoFile && anexoFile.size === 0) {
+      setToast({msg:"O anexo não pôde ser lido (comum com fotos recém-tiradas pela câmera) — salvei sem ele. Tente anexar de novo escolhendo da galeria.", type:"error"});
+    } else if (anexoFile) {
       setUploadingAnexo(true);
       const path = `${userId}/${Date.now()}-${anexoFile.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
       const { error: upErr } = await supabase.storage.from("anexos").upload(path, anexoFile);
