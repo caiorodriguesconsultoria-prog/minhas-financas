@@ -1443,6 +1443,15 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
   }
 
   async function handleSave() {
+    try {
+      await handleSaveInner();
+    } catch (e) {
+      setSaving(false);
+      setErr(`Erro inesperado: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  async function handleSaveInner() {
     if (form.tipo === "investimento") {
       if (!form.investimentoId || !form.value || !form.date) { setErr("Selecione o investimento, valor e data."); return; }
       if (noAccounts) { setErr("Nenhuma conta disponível."); return; }
@@ -3805,8 +3814,8 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
   useRefetchOnFocus(load);
   useEffect(() => { if (toast) { const t = setTimeout(()=>setToast(null), toast.type==="error"?6000:3000); return () => clearTimeout(t); } }, [toast]);
 
-  const fixedTemplates = bills.filter(b => !b.dia_fechamento && b.forma_pagamento !== "cartao");
-  const cardTemplates = bills.filter(b => !!b.dia_fechamento);
+  const fixedTemplates = bills.filter(b => b.recorrente && !b.dia_fechamento && b.forma_pagamento !== "cartao");
+  const cardTemplates = bills.filter(b => b.recorrente && !!b.dia_fechamento);
   const linkedFixedBills = bills.filter(b => !!b.cartao_vinculado_id);
 
   // Quanto já está comprometido (contas fixas + faturas de cartão) para um mês qualquer
