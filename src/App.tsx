@@ -688,17 +688,17 @@ function RelatoriosPage({ transactions, bills, loading }: { transactions: NormTx
   const billValor = (b: BillToPay) => (b.valor_base ?? 0) + (b.juros_atraso ?? 0) + (b.encargos_cartao ?? 0);
   const nextMonthOther = nextMonthBills;
   const nextMonthOtherTotal = nextMonthOther.reduce((s,b) => s + billValor(b), 0);
-  // Fatura de cartão do mês seguinte calculada ao vivo (mesma lógica da aba Cartões), não pelo valor guardado
-  const nextMonthCardsTotal = cardsListRel.reduce((s,c) => s + invoiceTotalFor(c.id, nextMonthKey, transactions, c.dia_fechamento ?? 1, linkedBillsRel).total, 0);
+  // Fatura de cartão do mês seguinte — usa o valor salvo/editado se existir, senão calcula ao vivo (mesma regra da aba Cartões)
+  const nextMonthCardsTotal = cardsListRel.reduce((s,c) => s + faturaOficialFor(c.id, nextMonthKey, transactions, c.dia_fechamento ?? 1, linkedBillsRel, bills), 0);
   const nextMonthCards = cardsListRel
-    .map(c => ({ nome: c.nome ?? "Cartão", valor: invoiceTotalFor(c.id, nextMonthKey, transactions, c.dia_fechamento ?? 1, linkedBillsRel).total }))
+    .map(c => ({ nome: c.nome ?? "Cartão", valor: faturaOficialFor(c.id, nextMonthKey, transactions, c.dia_fechamento ?? 1, linkedBillsRel, bills) }))
     .filter(c => c.valor > 0);
   const nextMonthTotal = nextMonthOtherTotal + nextMonthCardsTotal;
 
   // Total de despesas fixas + fatura de cartão do MÊS SELECIONADO (pra ver de fato quanto está comprometido naquele mês)
   const selectedMonthFixedBills = bills.filter(b => !b.recorrente && !b.dia_fechamento && (b.data_vencimento ?? "").startsWith(selectedMonth));
   const totalFixasMesSelecionado = selectedMonthFixedBills.reduce((s,b) => s + billValor(b), 0);
-  const totalCartaoMesSelecionado = cardsListRel.reduce((s,c) => s + invoiceTotalFor(c.id, selectedMonth, transactions, c.dia_fechamento ?? 1, linkedBillsRel).total, 0);
+  const totalCartaoMesSelecionado = cardsListRel.reduce((s,c) => s + faturaOficialFor(c.id, selectedMonth, transactions, c.dia_fechamento ?? 1, linkedBillsRel, bills), 0);
 
   const buildBillsShareText = () => {
     const fmtLines = (list: BillToPay[]) => list.map(b => {
@@ -2450,6 +2450,15 @@ function invoiceItemsFor(cardId: string, targetMonthKey: string, transactions: N
   return items.sort((a,b)=>(b.data??"").localeCompare(a.data??""));
 }
 
+// Valor "oficial" da fatura de um cartão num mês: se já existe uma fatura salva (editada manualmente
+// ou sincronizada) pra esse mês, usa ela — senão, cai pro cálculo ao vivo. Isso mantém consistência
+// entre a aba Cartões e qualquer outro lugar que precise mostrar/somar faturas (Visão Geral, Relatórios, Planejamento).
+function faturaOficialFor(cardId: string, targetMonthKey: string, transactions: NormTx[], diaFechamento: number, linkedBills: BillToPay[], allBills: BillToPay[]): number {
+  const instance = allBills.find(b => b.template_id === cardId && (b.data_vencimento ?? "").startsWith(targetMonthKey));
+  if (instance) return instance.valor_base ?? 0;
+  return invoiceTotalFor(cardId, targetMonthKey, transactions, diaFechamento, linkedBills).total;
+}
+
 function daysInMonth(year: number, month0: number): number {
   return new Date(year, month0 + 1, 0).getDate();
 }
@@ -3777,6 +3786,7 @@ function DespesasMesPage({ bills, accounts }: { bills: BillToPay[]; accounts: No
 
 function PlanejamentoPage({ userId, transactions }: { userId: string; transactions: NormTx[] }) {
   const [bills, setBills] = useState<BillToPay[]>([]);
+  const [allBillsForFatura, setAllBillsForFatura] = useState<BillToPay[]>([]);
   const [simulacoes, setSimulacoes] = useState<SimulacaoCompra[]>([]);
   const [planos, setPlanos] = useState<PlanejamentoMensal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3800,12 +3810,14 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [billsRes, simRes, planRes] = await Promise.all([
+    const [billsRes, allBillsRes, simRes, planRes] = await Promise.all([
       supabase.from("bills_to_pay").select("*").eq("recorrente", true),
+      supabase.from("bills_to_pay").select("*"),
       supabase.from("simulacoes_compra").select("*").order("created_at", { ascending: false }),
       supabase.from("planejamento_mensal").select("*"),
     ]);
     if (!billsRes.error) setBills((billsRes.data ?? []) as BillToPay[]);
+    if (!allBillsRes.error) setAllBillsForFatura((allBillsRes.data ?? []) as BillToPay[]);
     if (!simRes.error) setSimulacoes((simRes.data ?? []) as SimulacaoCompra[]);
     if (!planRes.error) setPlanos((planRes.data ?? []) as PlanejamentoMensal[]);
     setLoading(false);
@@ -3830,7 +3842,7 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
       return aindaAtivo ? s + (t.valor_base ?? 0) : s;
     }, 0);
     const cardsTotal = cardTemplates.reduce((s, c) =>
-      s + invoiceTotalFor(c.id, targetMonth, transactions, c.dia_fechamento ?? 1, linkedFixedBills).total, 0);
+      s + faturaOficialFor(c.id, targetMonth, transactions, c.dia_fechamento ?? 1, linkedFixedBills, allBillsForFatura), 0);
     return fixedTotal + cardsTotal;
   }
 
@@ -5034,7 +5046,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   // em vez de somar pela data bruta da transação (que não sabe distribuir parcelas corretamente).
   const cardsListMain = bills.filter(b => b.recorrente && !!b.dia_fechamento);
   const linkedBillsMain = bills.filter(b => !!b.cartao_vinculado_id);
-  const totalCartaoMes = cardsListMain.reduce((s, c) => s + invoiceTotalFor(c.id, currentMonthKeyMain, transactions, c.dia_fechamento ?? 1, linkedBillsMain).total, 0);
+  const totalCartaoMes = cardsListMain.reduce((s, c) => s + faturaOficialFor(c.id, currentMonthKeyMain, transactions, c.dia_fechamento ?? 1, linkedBillsMain, bills), 0);
 
   // Total investido este mês — vem da aba Investimentos (aportes iniciais + lançamentos do mês), não de "transactions"
   const [totalInvestMes, setTotalInvestMes] = useState(0);
