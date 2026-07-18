@@ -1366,6 +1366,8 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
   const [similarTxs,  setSimilarTxs] = useState<NormTx[]>([]);
   const [showSimilar, setShowSimilar] = useState(false);
   const [cartaoId,    setCartaoId]    = useState("");
+  const modalRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (err && modalRef.current) modalRef.current.scrollTop = 0; }, [err]);
   const [parcelas,    setParcelas]    = useState("1");
   const [anexoFile,   setAnexoFile]   = useState<File | null>(null);
   const [uploadingAnexo, setUploadingAnexo] = useState(false);
@@ -1583,7 +1585,7 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-sheet" style={{maxHeight:"92svh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+      <div className="modal-sheet" ref={modalRef} style={{maxHeight:"92svh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
         <div className="modal-handle" />
         <div className="modal-title">Nova Transação</div>
 
