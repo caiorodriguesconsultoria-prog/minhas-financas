@@ -434,7 +434,7 @@ function useFinanceData(view: ViewType, userId: string | null, partnerUserId: st
       const [profRes, accRes, billRes] = await Promise.all([
         supabase.from("profiles").select("*"),
         accQuery,
-        supabase.from("bills_to_pay").select("*").order("data_vencimento", { ascending: true }).limit(100),
+        supabase.from("bills_to_pay").select("*").order("data_vencimento", { ascending: true }).limit(2000),
       ]);
 
       if (run !== tick.current) return;
@@ -677,27 +677,38 @@ function RelatoriosPage({ transactions, bills, loading }: { transactions: NormTx
   // Despesas a pagar do mês seguinte
   const nextMonthDate = new Date(now.getFullYear(), now.getMonth()+1, 1);
   const nextMonthLabel = `${MONTH_NAMES[nextMonthDate.getMonth()]} ${nextMonthDate.getFullYear()}`;
+  const nextMonthKey = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth()+1).padStart(2,"0")}`;
+  const cardsListRel = bills.filter(b => b.recorrente && !!b.dia_fechamento);
+  const linkedBillsRel = bills.filter(b => !!b.cartao_vinculado_id);
   const nextMonthBills = bills.filter(b => {
-    if (!b.data_vencimento) return false;
+    if (!b.data_vencimento || b.recorrente || b.dia_fechamento) return false; // exclui templates e faturas de cartão (calculadas à parte)
     const d = new Date(b.data_vencimento + "T00:00:00");
     return d.getFullYear() === nextMonthDate.getFullYear() && d.getMonth() === nextMonthDate.getMonth();
   }).sort((a,b) => (a.data_vencimento ?? "").localeCompare(b.data_vencimento ?? ""));
-  const isCardBill = (b: BillToPay) => (b.categoria ?? "").toLowerCase() === "cartão de crédito" || !!b.encargos_cartao;
-  const nextMonthCards = nextMonthBills.filter(isCardBill);
-  const nextMonthOther = nextMonthBills.filter(b => !isCardBill(b));
   const billValor = (b: BillToPay) => (b.valor_base ?? 0) + (b.juros_atraso ?? 0) + (b.encargos_cartao ?? 0);
-  const nextMonthTotal = nextMonthBills.reduce((s,b) => s + billValor(b), 0);
-  const nextMonthCardsTotal = nextMonthCards.reduce((s,b) => s + billValor(b), 0);
+  const nextMonthOther = nextMonthBills;
   const nextMonthOtherTotal = nextMonthOther.reduce((s,b) => s + billValor(b), 0);
+  // Fatura de cartão do mês seguinte calculada ao vivo (mesma lógica da aba Cartões), não pelo valor guardado
+  const nextMonthCardsTotal = cardsListRel.reduce((s,c) => s + invoiceTotalFor(c.id, nextMonthKey, transactions, c.dia_fechamento ?? 1, linkedBillsRel).total, 0);
+  const nextMonthCards = cardsListRel
+    .map(c => ({ nome: c.nome ?? "Cartão", valor: invoiceTotalFor(c.id, nextMonthKey, transactions, c.dia_fechamento ?? 1, linkedBillsRel).total }))
+    .filter(c => c.valor > 0);
+  const nextMonthTotal = nextMonthOtherTotal + nextMonthCardsTotal;
+
+  // Total de despesas fixas + fatura de cartão do MÊS SELECIONADO (pra ver de fato quanto está comprometido naquele mês)
+  const selectedMonthFixedBills = bills.filter(b => !b.recorrente && !b.dia_fechamento && (b.data_vencimento ?? "").startsWith(selectedMonth));
+  const totalFixasMesSelecionado = selectedMonthFixedBills.reduce((s,b) => s + billValor(b), 0);
+  const totalCartaoMesSelecionado = cardsListRel.reduce((s,c) => s + invoiceTotalFor(c.id, selectedMonth, transactions, c.dia_fechamento ?? 1, linkedBillsRel).total, 0);
 
   const buildBillsShareText = () => {
     const fmtLines = (list: BillToPay[]) => list.map(b => {
       const venc = b.data_vencimento ? new Date(b.data_vencimento + "T00:00:00").toLocaleDateString("pt-BR") : "sem data";
       return `• ${b.nome ?? "Sem nome"} — ${formatBRL(billValor(b))} (venc. ${venc})`;
     }).join("\n");
+    const fmtCardLines = (list: {nome:string;valor:number}[]) => list.map(c => `• ${c.nome} — ${formatBRL(c.valor)}`).join("\n");
     const parts: string[] = [];
     if (nextMonthOther.length) parts.push(`Contas fixas:\n${fmtLines(nextMonthOther)}\nSubtotal: ${formatBRL(nextMonthOtherTotal)}`);
-    if (nextMonthCards.length) parts.push(`Faturas de cartão:\n${fmtLines(nextMonthCards)}\nSubtotal: ${formatBRL(nextMonthCardsTotal)}`);
+    if (nextMonthCards.length) parts.push(`Faturas de cartão:\n${fmtCardLines(nextMonthCards)}\nSubtotal: ${formatBRL(nextMonthCardsTotal)}`);
     return `📋 Despesas a pagar — ${nextMonthLabel}\n\n${parts.join("\n\n")}\n\nTotal geral: ${formatBRL(nextMonthTotal)}`;
   };
   const shareWhatsApp = () => window.open(`https://wa.me/?text=${encodeURIComponent(buildBillsShareText())}`, "_blank");
@@ -730,22 +741,56 @@ function RelatoriosPage({ transactions, bills, loading }: { transactions: NormTx
     </div>
   );
 
+  const renderCardGroup = (title: string, list: {nome:string;valor:number}[], subtotal: number) => list.length > 0 && (
+    <div style={{marginBottom:14}}>
+      <div style={{fontSize:12,fontWeight:600,color:"#86868B",textTransform:"uppercase",letterSpacing:0.3,marginBottom:6}}>{title}</div>
+      <div style={{borderTop:"0.5px solid #E5E5E7"}}>
+        {list.map((c,i) => (
+          <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid #E5E5E7"}}>
+            <div style={{fontSize:14,color:"#1D1D1F"}}>💳 {c.nome}</div>
+            <div style={{fontSize:14,fontWeight:600,color:"#FF3B30"}}>{formatBRL(c.valor)}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0 0"}}>
+        <span style={{fontSize:12,color:"#86868B"}}>Subtotal</span>
+        <span style={{fontSize:13,fontWeight:600,color:"#1D1D1F"}}>{formatBRL(subtotal)}</span>
+      </div>
+    </div>
+  );
+
   return (
     <div className="scroll-content page-fade">
       <div className="section-title" style={{marginBottom:14}}>Relatórios</div>
+
+      {/* Total em despesas fixas + fatura de cartão do mês selecionado */}
+      <div style={{background:"#F5F5F7",borderRadius:16,padding:16,marginBottom:14,display:"flex",justifyContent:"space-around",textAlign:"center"}}>
+        <div>
+          <div style={{fontSize:12,color:"#86868B",marginBottom:4}}>Despesas fixas ({PERIOD_LABELS.mes})</div>
+          <div style={{fontSize:16,fontWeight:700,color:"#1D1D1F"}}>{formatBRL(totalFixasMesSelecionado)}</div>
+        </div>
+        <div>
+          <div style={{fontSize:12,color:"#86868B",marginBottom:4}}>Fatura de cartão</div>
+          <div style={{fontSize:16,fontWeight:700,color:"#5856D6"}}>{formatBRL(totalCartaoMesSelecionado)}</div>
+        </div>
+        <div>
+          <div style={{fontSize:12,color:"#86868B",marginBottom:4}}>Total comprometido</div>
+          <div style={{fontSize:16,fontWeight:700,color:"#FF3B30"}}>{formatBRL(totalFixasMesSelecionado+totalCartaoMesSelecionado)}</div>
+        </div>
+      </div>
 
       {/* Despesas a pagar — mês seguinte */}
       <div style={{background:"#F5F5F7",borderRadius:16,padding:16,marginBottom:20}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <span style={{fontSize:15,fontWeight:600,color:"#1D1D1F"}}>Despesas a pagar — {nextMonthLabel}</span>
-          <span style={{fontSize:13,color:"#86868B"}}>{nextMonthBills.length} conta{nextMonthBills.length!==1?"s":""}</span>
+          <span style={{fontSize:13,color:"#86868B"}}>{nextMonthOther.length + nextMonthCards.length} conta{(nextMonthOther.length + nextMonthCards.length)!==1?"s":""}</span>
         </div>
-        {nextMonthBills.length === 0 ? (
+        {(nextMonthOther.length + nextMonthCards.length) === 0 ? (
           <div style={{fontSize:13,color:"#86868B",padding:"8px 0"}}>Nenhuma conta ou fatura cadastrada para {nextMonthLabel}.</div>
         ) : (
           <>
             {renderBillGroup("Contas fixas", nextMonthOther, nextMonthOtherTotal)}
-            {renderBillGroup("Faturas de cartão", nextMonthCards, nextMonthCardsTotal)}
+            {renderCardGroup("Faturas de cartão", nextMonthCards, nextMonthCardsTotal)}
           </>
         )}
         {nextMonthBills.length > 0 && (
@@ -4978,22 +5023,9 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
 
   // Total do cartão de crédito este mês — usa o mesmo cálculo de fatura (por data de fechamento + parcelas) que a aba Cartões usa,
   // em vez de somar pela data bruta da transação (que não sabe distribuir parcelas corretamente).
-  const [totalCartaoMes, setTotalCartaoMes] = useState(0);
-  useEffect(() => {
-    if (transactions.length === 0) return; // evita zerar antes dos dados carregarem
-    (async () => {
-      const [cardsRes, linkedRes] = await Promise.all([
-        supabase.from("bills_to_pay").select("id, dia_fechamento").eq("recorrente", true).not("dia_fechamento", "is", null),
-        supabase.from("bills_to_pay").select("*").not("cartao_vinculado_id", "is", null),
-      ]);
-      if (cardsRes.error) { console.error("Erro ao buscar cartões:", cardsRes.error); return; }
-      if (linkedRes.error) { console.error("Erro ao buscar contas vinculadas:", linkedRes.error); }
-      const cardsList = (cardsRes.data ?? []) as { id:string; dia_fechamento:number }[];
-      const linkedBills = (linkedRes.data ?? []) as BillToPay[];
-      const total = cardsList.reduce((s, c) => s + invoiceTotalFor(c.id, currentMonthKeyMain, transactions, c.dia_fechamento ?? 1, linkedBills).total, 0);
-      setTotalCartaoMes(total);
-    })();
-  }, [currentMonthKeyMain, transactions]);
+  const cardsListMain = bills.filter(b => b.recorrente && !!b.dia_fechamento);
+  const linkedBillsMain = bills.filter(b => !!b.cartao_vinculado_id);
+  const totalCartaoMes = cardsListMain.reduce((s, c) => s + invoiceTotalFor(c.id, currentMonthKeyMain, transactions, c.dia_fechamento ?? 1, linkedBillsMain).total, 0);
 
   // Total investido este mês — vem da aba Investimentos (aportes iniciais + lançamentos do mês), não de "transactions"
   const [totalInvestMes, setTotalInvestMes] = useState(0);
