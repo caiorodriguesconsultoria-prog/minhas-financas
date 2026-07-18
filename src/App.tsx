@@ -2390,7 +2390,10 @@ const CATEGORIAS_FIXAS = ["Moradia","Utilidades","Assinaturas","Dívidas","Trans
 function invoiceMonthKey(dataTransacao: string, diaFechamento: number): string {
   const d = new Date(dataTransacao + "T00:00:00");
   let y = d.getFullYear(), m = d.getMonth(); // 0-indexed
-  if (d.getDate() > diaFechamento) { m += 1; if (m > 11) { m = 0; y += 1; } }
+  // A fatura é nomeada pelo mês onde a maior parte do consumo aconteceu (mesmo fechando/vencendo no mês seguinte):
+  // uma compra feita depois do dia de fechamento já pertence à fatura "deste" mês (que fecha só no mês seguinte);
+  // uma compra feita no dia do fechamento ou antes ainda pertence à fatura do mês anterior.
+  if (d.getDate() <= diaFechamento) { m -= 1; if (m < 0) { m = 11; y -= 1; } }
   return `${y}-${String(m+1).padStart(2,"0")}`;
 }
 function addMonthsToKey(key: string, n: number): string {
