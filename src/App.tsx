@@ -1281,6 +1281,23 @@ const EMPTY_FORM: TxForm = { name:"", value:"", category:"", date:"", accountId:
 
 // Ajusta o saldo de uma conta somando/subtraindo um valor (usado ao criar/editar/excluir transações,
 // pra manter o saldo da conta sempre refletindo os lançamentos automaticamente).
+async function uploadAnexo(userId: string, file: File): Promise<{ url: string | null; error: string | null }> {
+  try {
+    const buffer = await file.arrayBuffer();
+    if (buffer.byteLength === 0) {
+      return { url: null, error: "vazio" };
+    }
+    const blob = new Blob([buffer], { type: file.type || "application/octet-stream" });
+    const path = `${userId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+    const { error: upErr } = await supabase.storage.from("anexos").upload(path, blob, { contentType: blob.type });
+    if (upErr) return { url: null, error: upErr.message };
+    const url = supabase.storage.from("anexos").getPublicUrl(path).data.publicUrl;
+    return { url, error: null };
+  } catch (e) {
+    return { url: null, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 async function adjustAccountBalance(accountId: string | null | undefined, delta: number): Promise<string | null> {
   if (!accountId || delta === 0) return null;
   const { data, error: selErr } = await supabase.from("accounts").select("saldo_inicial").eq("id", accountId).single();
@@ -1524,22 +1541,20 @@ function NovaTransacaoModal({ onClose, onSaved, accounts, userId, transactions, 
 
     let anexoUrl: string | null = null;
     let anexoNome: string | null = null;
-    if (anexoFile && anexoFile.size === 0) {
-      // Falha comum do Safari/iOS com fotos recém-tiradas pela câmera: o arquivo chega vazio.
-      // Não trava o salvamento da transação por causa disso — só avisa e segue sem anexo.
-      setErr("O anexo não pôde ser lido (comum com fotos recém-tiradas pela câmera) — a transação foi salva sem ele. Tente anexar de novo depois, escolhendo da galeria.");
-    } else if (anexoFile) {
+    if (anexoFile) {
       setUploadingAnexo(true);
-      const path = `${userId}/${Date.now()}-${anexoFile.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
-      const { error: upErr } = await supabase.storage.from("anexos").upload(path, anexoFile);
+      const { url, error: upErr } = await uploadAnexo(userId, anexoFile);
       setUploadingAnexo(false);
-      if (upErr) {
+      if (upErr === "vazio") {
+        setErr("O anexo não pôde ser lido (comum com fotos recém-tiradas pela câmera) — a transação foi salva sem ele. Tente anexar de novo depois, escolhendo da galeria.");
+      } else if (upErr) {
         setSaving(false);
-        setErr(`Erro ao enviar anexo: ${upErr.message}`);
+        setErr(`Erro ao enviar anexo: ${upErr}`);
         return;
+      } else {
+        anexoUrl = url;
+        anexoNome = anexoFile.name;
       }
-      anexoUrl = supabase.storage.from("anexos").getPublicUrl(path).data.publicUrl;
-      anexoNome = anexoFile.name;
     }
 
     const isCredito = form.meio_pagamento === "Crédito";
@@ -1910,16 +1925,17 @@ function EditTransacaoModal({ tx, onClose, onSaved, onDeleted, accounts }: {
     setSaving(true); setErr(null);
 
     let anexoUpdate: Record<string, unknown> = {};
-    if (anexoFile && anexoFile.size === 0) {
-      setErr("O anexo não pôde ser lido (comum com fotos recém-tiradas pela câmera) — a transação foi salva sem ele. Tente anexar de novo depois, escolhendo da galeria.");
-    } else if (anexoFile) {
+    if (anexoFile) {
       setUploadingAnexo(true);
-      const path = `${tx.user_id ?? "sem-usuario"}/${Date.now()}-${anexoFile.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
-      const { error: upErr } = await supabase.storage.from("anexos").upload(path, anexoFile);
+      const { url, error: upErr } = await uploadAnexo(tx.user_id ?? "sem-usuario", anexoFile);
       setUploadingAnexo(false);
-      if (upErr) { setSaving(false); setErr(`Erro ao enviar anexo: ${upErr.message}`); return; }
-      const url = supabase.storage.from("anexos").getPublicUrl(path).data.publicUrl;
-      anexoUpdate = { anexo_url: url, anexo_nome: anexoFile.name };
+      if (upErr === "vazio") {
+        setErr("O anexo não pôde ser lido (comum com fotos recém-tiradas pela câmera) — a transação foi salva sem ele. Tente anexar de novo depois, escolhendo da galeria.");
+      } else if (upErr) {
+        setSaving(false); setErr(`Erro ao enviar anexo: ${upErr}`); return;
+      } else {
+        anexoUpdate = { anexo_url: url, anexo_nome: anexoFile.name };
+      }
     } else if (removeAnexo) {
       anexoUpdate = { anexo_url: null, anexo_nome: null };
     }
@@ -2614,16 +2630,18 @@ function ContasFixasPage({ userId, transactions, accounts, onOpenCartoes }: { us
 
     let anexoUrl: string | null = null;
     let anexoNome: string | null = null;
-    if (anexoFile && anexoFile.size === 0) {
-      setToast({msg:"O anexo não pôde ser lido (comum com fotos recém-tiradas pela câmera) — salvei sem ele. Tente anexar de novo escolhendo da galeria.", type:"error"});
-    } else if (anexoFile) {
+    if (anexoFile) {
       setUploadingAnexo(true);
-      const path = `${userId}/${Date.now()}-${anexoFile.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
-      const { error: upErr } = await supabase.storage.from("anexos").upload(path, anexoFile);
+      const { url, error: upErr } = await uploadAnexo(userId, anexoFile);
       setUploadingAnexo(false);
-      if (upErr) { setSaving(false); setToast({msg:`Erro ao enviar anexo: ${upErr.message}`,type:"error"}); return; }
-      anexoUrl = supabase.storage.from("anexos").getPublicUrl(path).data.publicUrl;
-      anexoNome = anexoFile.name;
+      if (upErr === "vazio") {
+        setToast({msg:"O anexo não pôde ser lido (comum com fotos recém-tiradas pela câmera) — salvei sem ele. Tente anexar de novo escolhendo da galeria.", type:"error"});
+      } else if (upErr) {
+        setSaving(false); setToast({msg:`Erro ao enviar anexo: ${upErr}`,type:"error"}); return;
+      } else {
+        anexoUrl = url;
+        anexoNome = anexoFile.name;
+      }
     }
 
     const diaVencimentoCalculado = form.primeira_data ? new Date(form.primeira_data + "T00:00:00").getDate() : null;
