@@ -689,16 +689,16 @@ function RelatoriosPage({ transactions, bills, loading }: { transactions: NormTx
   const nextMonthOther = nextMonthBills;
   const nextMonthOtherTotal = nextMonthOther.reduce((s,b) => s + billValor(b), 0);
   // Fatura de cartão do mês seguinte — usa o valor salvo/editado se existir, senão calcula ao vivo (mesma regra da aba Cartões)
-  const nextMonthCardsTotal = cardsListRel.reduce((s,c) => s + faturaOficialFor(c.id, nextMonthKey, transactions, c.dia_fechamento ?? 1, linkedBillsRel, bills), 0);
+  const nextMonthCardsTotal = cardsListRel.reduce((s,c) => s + invoiceTotalFor(c.id, nextMonthKey, transactions, c.dia_fechamento ?? 1, linkedBillsRel).total, 0);
   const nextMonthCards = cardsListRel
-    .map(c => ({ nome: c.nome ?? "Cartão", valor: faturaOficialFor(c.id, nextMonthKey, transactions, c.dia_fechamento ?? 1, linkedBillsRel, bills) }))
+    .map(c => ({ nome: c.nome ?? "Cartão", valor: invoiceTotalFor(c.id, nextMonthKey, transactions, c.dia_fechamento ?? 1, linkedBillsRel).total }))
     .filter(c => c.valor > 0);
   const nextMonthTotal = nextMonthOtherTotal + nextMonthCardsTotal;
 
   // Total de despesas fixas + fatura de cartão do MÊS SELECIONADO (pra ver de fato quanto está comprometido naquele mês)
   const selectedMonthFixedBills = bills.filter(b => !b.recorrente && !b.dia_fechamento && (b.data_vencimento ?? "").startsWith(selectedMonth));
   const totalFixasMesSelecionado = selectedMonthFixedBills.reduce((s,b) => s + billValor(b), 0);
-  const totalCartaoMesSelecionado = cardsListRel.reduce((s,c) => s + faturaOficialFor(c.id, selectedMonth, transactions, c.dia_fechamento ?? 1, linkedBillsRel, bills), 0);
+  const totalCartaoMesSelecionado = cardsListRel.reduce((s,c) => s + invoiceTotalFor(c.id, selectedMonth, transactions, c.dia_fechamento ?? 1, linkedBillsRel).total, 0);
 
   const buildBillsShareText = () => {
     const fmtLines = (list: BillToPay[]) => list.map(b => {
@@ -3373,10 +3373,7 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
       ) : (
         <>
           {(() => {
-            const faturaExibida = (card: BillToPay) => {
-              const inst = all.find(b => b.template_id === card.id && (b.data_vencimento ?? "").startsWith(monthKey));
-              return inst ? (inst.valor_base ?? 0) : invoiceTotalFor(card.id, monthKey, transactions, card.dia_fechamento ?? 1, linkedFixedBills).total;
-            };
+            const faturaExibida = (card: BillToPay) => invoiceTotalFor(card.id, monthKey, transactions, card.dia_fechamento ?? 1, linkedFixedBills).total;
             const totalFaturaAtual = cards.reduce((s,c) => s + faturaExibida(c), 0);
             const cardSegments = buildPieSegments(cards.map(c => ({
               label: c.nome ?? "Cartão",
@@ -3408,7 +3405,7 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
             const currentInvoice = invoiceTotalFor(card.id, viewMonth, transactions, card.dia_fechamento!, linkedFixedBills);
             const nextKey = addMonthsToKey(viewMonth, 1);
             const nextInvoice = invoiceTotalFor(card.id, nextKey, transactions, card.dia_fechamento!, linkedFixedBills);
-            const valorExibido = isCurrentMonth && instance ? (instance.valor_base ?? currentInvoice.total) : currentInvoice.total;
+            const valorExibido = currentInvoice.total;
             const daysToClose = (() => {
               const today = new Date();
               let close = new Date(today.getFullYear(), today.getMonth(), card.dia_fechamento!);
@@ -3433,11 +3430,6 @@ function CartoesPage({ userId, transactions, accounts, onImported }: { userId: s
                     <span style={{fontSize:12,color:"#86868B"}}>{isCurrentMonth?"Fatura atual":`Fatura de ${monthKeyLabel(viewMonth)}`} ({currentInvoice.count} lançamento{currentInvoice.count!==1?"s":""}){isCurrentMonth&&paid?" · Paga":""}</span>
                     <span style={{fontSize:15,fontWeight:700,color:isCurrentMonth&&paid?"#34C759":"#FF3B30"}}>{formatBRL(valorExibido)}</span>
                   </div>
-                  {isCurrentMonth && instance && Math.abs((instance.valor_base ?? 0) - currentInvoice.total) > 0.01 && (
-                    <div style={{fontSize:11,color:"#FF9500",marginBottom:8}}>
-                      Valor ajustado manualmente (soma das compras lançadas seria {formatBRL(currentInvoice.total)})
-                    </div>
-                  )}
                   {linkedFixedBills.filter(b=>b.cartao_vinculado_id===card.id).length > 0 && (
                     <div style={{fontSize:11,color:"#86868B",marginBottom:8,lineHeight:1.5}}>
                       Inclui assinaturas fixas: {linkedFixedBills.filter(b=>b.cartao_vinculado_id===card.id).map(b=>`${b.nome} (${formatBRL(b.valor_base??0)})`).join(", ")}
@@ -3845,7 +3837,7 @@ function PlanejamentoPage({ userId, transactions }: { userId: string; transactio
       return aindaAtivo ? s + (t.valor_base ?? 0) : s;
     }, 0);
     const cardsTotal = cardTemplates.reduce((s, c) =>
-      s + faturaOficialFor(c.id, targetMonth, transactions, c.dia_fechamento ?? 1, linkedFixedBills, allBillsForFatura), 0);
+      s + invoiceTotalFor(c.id, targetMonth, transactions, c.dia_fechamento ?? 1, linkedFixedBills).total, 0);
     return fixedTotal + cardsTotal;
   }
 
@@ -5049,7 +5041,7 @@ function MainApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   // em vez de somar pela data bruta da transação (que não sabe distribuir parcelas corretamente).
   const cardsListMain = bills.filter(b => b.recorrente && !!b.dia_fechamento);
   const linkedBillsMain = bills.filter(b => !!b.cartao_vinculado_id);
-  const totalCartaoMes = cardsListMain.reduce((s, c) => s + faturaOficialFor(c.id, currentMonthKeyMain, transactions, c.dia_fechamento ?? 1, linkedBillsMain, bills), 0);
+  const totalCartaoMes = cardsListMain.reduce((s, c) => s + invoiceTotalFor(c.id, currentMonthKeyMain, transactions, c.dia_fechamento ?? 1, linkedBillsMain).total, 0);
 
   // Total investido este mês — vem da aba Investimentos (aportes iniciais + lançamentos do mês), não de "transactions"
   const [totalInvestMes, setTotalInvestMes] = useState(0);
